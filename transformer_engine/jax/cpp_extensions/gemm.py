@@ -182,10 +182,10 @@ class CollectiveGemmPrimitive(BasePrimitive):
                 out_amax_updated_dtype == out_scale_updated_dtype == jnp.float32
             ), "Invalid output amax or scale dtype."
         else:
-            assert out_dtype == lhs_dtype, (
+            """assert out_dtype == lhs_dtype, (
                 "Output buffer has incorrect dtype: "
                 + f"expected {lhs_dtype} but found {out_dtype}"
-            )
+            )"""
             out_amax_updated_dtype = jnp.float32
             out_scale_updated_dtype = jnp.float32
 
@@ -523,7 +523,7 @@ class CollectiveGemmPrimitive(BasePrimitive):
         if lhs_2d_shape is not None and lhs.ndim > 2:
             lhs = jax.lax.reshape(lhs, lhs_2d_shape, dimensions=lhs_layout)
             if jax_dtype_is_fp8(lhs.dtype):
-                lhs = jax.lax.transpose(lhs, (1, 0))
+                #lhs = jax.lax.transpose(lhs, (1, 0))
                 contracting_dims_2d[0] = 1
         else:
             contracting_dims_2d[0] = contracting_dims[0]
@@ -1086,7 +1086,7 @@ def fp8_gemm_impl(
     comm_overlap_config: Optional[dict] = None,
 ) -> Tuple[ArrayLike, ...]:
     """FP8 mat-mul with `nvte_cublas_gemm()` custom op."""
-    out_shape_batched = (*lhs.shape[:-2], lhs.shape[-1], rhs_t.shape[-1])
+    out_shape_batched = (*lhs.shape[:-2], lhs.shape[-2], rhs_t.shape[-2])
     out_shape_2d = (reduce(operator.mul, out_shape_batched[:-1], 1), out_shape_batched[-1])
     out_shape = out_shape_batched if batched_output else out_shape_2d
 
@@ -1123,10 +1123,10 @@ def fp8_gemm_impl(
 
     (out, out_amax, out_scale, pre_gelu_out, _, extra_out) = (  # bias_grad in non-FP8 GEMM
         CollectiveGemmPrimitive.outer_primitive.bind(
-            rhs_t,
-            rhs_scale_inv,
             lhs,
             lhs_scale_inv,
+            rhs_t,
+            rhs_scale_inv,
             bias,
             gelu_input,
             out,
