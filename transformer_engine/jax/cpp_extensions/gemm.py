@@ -546,7 +546,7 @@ class CollectiveGemmPrimitive(BasePrimitive):
         if lhs_2d_shape is not None and lhs.ndim > 2:
             lhs = jax.lax.reshape(lhs, lhs_2d_shape, dimensions=lhs_layout)
             if jax_dtype_is_fp8(lhs.dtype):
-                lhs = jax.lax.transpose(lhs, (1, 0))
+                #lhs = jax.lax.transpose(lhs, (1, 0))
                 contracting_dims_2d[0] = 1
         else:
             contracting_dims_2d[0] = contracting_dims[0]
