@@ -243,7 +243,7 @@ class CollectiveGemmPrimitive(BasePrimitive):
                     expected_extra_out_shape = list(lhs_aval.shape).copy()
                 elif comm_type == tex.CommOverlapType.RS:
                     expected_extra_out_shape = list(expected_out_shape).copy()
-                    expected_extra_out_dtype = lhs_dtype
+                    #expected_extra_out_dtype = lhs_dtype
 
                 if sharded_abstract:
                     if comm_type == tex.CommOverlapType.AG:
