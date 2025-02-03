@@ -104,7 +104,7 @@ def gemm(
         ):
             if sanitize_dims(contracting_dims[0], x.ndim) != x.ndim - 1:
                 x = jnp.matrix_transpose(x)
-            copy_into_overlap_buffer(x, comm_overlap_name, True)
+            copy_into_overlap_buffer(x, comm_overlap_layer, True)
 
     return _gemm(
         x,
