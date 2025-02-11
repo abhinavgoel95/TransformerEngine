@@ -104,7 +104,7 @@ def gemm(
         ):
             if sanitize_dims(contracting_dims[0], x.ndim) != x.ndim - 1:
                 x = jnp.matrix_transpose(x)
-            copy_into_overlap_buffer(x, comm_overlap_name, True)
+            _ = _copy_into_overlap_buffer(x, comm_overlap_layer, True)
 
     return _gemm(
         x,
@@ -205,6 +205,7 @@ def _gemm_bwd_rule(
     grad,
 ):
     x, kernel, pre_gelu_out, fuse_bias = ctx
+    x_shape = x.shape
     x_inner_dim, kernel_inner_dim = map(sanitize_dims, contracting_dims, (x.ndim, kernel.ndim))
     x_outer_dim, kernel_outer_dim = map(
         mirror_dim, (x_inner_dim, kernel_inner_dim), (x.ndim, kernel.ndim)
@@ -229,7 +230,8 @@ def _gemm_bwd_rule(
             assert (
                 wgrad_overlap_config is not None
             ), f"Missing comm+GEMM overlap config for {wgrad_overlap_name}!"
-            dgrad_pre_rs = tex.get_overlap_buffer(wgrad_overlap_name, False)
+            #dgrad_pre_rs = jax.dlpack.from_dlpack(tex.get_overlap_buffer(wgrad_overlap_name, False))
+            dgrad_pre_rs = jnp.zeros(x_shape, dtype=x.dtype)
 
             # Copy transposed input into the DGRAD overlap buffer for bulk AG.
             copy_into_overlap_buffer(jnp.matrix_transpose(x), dgrad_overlap_name, True)
@@ -267,7 +269,6 @@ def _gemm_bwd_rule(
         use_split_accumulator=use_split_accumulator,
         comm_overlap_config=dgrad_overlap_config,
     )
-
     if (
         dgrad_overlap_config is not None
         and dgrad_overlap_config["method"] != "bulk"
@@ -288,9 +289,21 @@ def _gemm_bwd_rule(
     #                              ([B], M, K) --(Bulk RS)--> ([B], M/P, K) (finalize DGRAD)
     #
     #    GEMM+RS: ([B], M, K/P)^T x ([B], M, N) --> (K/P, N) (re-use all-gathered GRAD from DGRAD)
-    wgrad_rhs = dgelu if fuse_gelu else (grad if comm_overlap_config is None else dgrad_extra_out)
+    wgrad_rhs = dgelu if fuse_gelu else grad #(grad if comm_overlap_config is None else dgrad_extra_out)
+    
+    if wgrad_overlap_config is not None:
+        if wgrad_overlap_config["method"] == "bulk":
+            copy_into_overlap_buffer(dgrad_pre_rs, wgrad_overlap_name, True)
+    
+    #TODO(AG): need to check if x, wgrad_rhs are batched, if so, change contracting dims (and/or) reshape
+    if x.ndim > 2:
+        x = x.reshape([-1, x.shape[-1]])
+        dgrad_extra_out = dgrad_extra_out.reshape([-1, dgrad_extra_out.shape[-1]])
+        wgrad_rhs = wgrad_rhs.reshape([-1, wgrad_rhs.shape[-1]])
+        x_outer_dim = x.ndim - 2
+
     wgrad, _, bgrad, wgrad_extra_out = gemm_impl(
-        x,
+        dgrad_extra_out if (wgrad_overlap_config is not None and wgrad_overlap_config["method"] == "bulk") else x,
         wgrad_rhs,
         gelu_input=pre_gelu_out,
         batched_output=False,
@@ -302,18 +315,17 @@ def _gemm_bwd_rule(
         use_split_accumulator=use_split_accumulator,
         comm_overlap_config=wgrad_overlap_config,
     )
-
     if (
         wgrad_overlap_config is not None
         and wgrad_overlap_config["method"] == "bulk"
         and wgrad_overlap_config["comm_type"] == tex.CommOverlapType.RS
     ):
         # DGRAD was reduce-scattered during WGRAD GEMM, so set DGRAD to WGRAD extra output here
-        dgrad = wgrad_extra_out
-
+        dgrad = wgrad_extra_out.reshape(x_shape)
+    
     if not fuse_bias:
         bgrad = None
-
+    
     return dgrad, wgrad, bgrad
 
 
@@ -384,7 +396,7 @@ def fp8_gemm(
             and comm_overlap_config["method"] != "bulk"
             and comm_overlap_config["comm_type"] == tex.CommOverlapType.AG
         ):
-            copy_into_overlap_buffer(x, comm_overlap_name, True)
+            _ = _copy_into_overlap_buffer(x, comm_overlap_name, True)
 
     return _fp8_gemm(
         x,
@@ -759,6 +771,26 @@ def _fp8_gemm_bwd_rule(
 
 
 _fp8_gemm.defvjp(_fp8_gemm_fwd_rule, _fp8_gemm_bwd_rule)
+
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2,))
+def _copy_into_overlap_buffer(x: ArrayLike, comm_overlap_name: str, sharded: bool):
+    x, _ = _copy_into_overlap_buffer_fwd_rule(x, comm_overlap_name, sharded)
+    return x
+
+
+def _copy_into_overlap_buffer_fwd_rule(x, comm_overlap_name, sharded):
+    copy_into_overlap_buffer(x, comm_overlap_name, sharded)
+    return x, ()    # Empty ctx
+
+
+def _copy_into_overlap_buffer_bwd_rule(comm_overlap_name, sharded, grad):
+    del comm_overlap_name, sharded
+    return grad
+
+
+_copy_into_overlap_buffer.defvjp(_copy_into_overlap_buffer_fwd_rule,
+                                 _copy_into_overlap_buffer_bwd_rule)
 
 
 def type_safe_gemm(

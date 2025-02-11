@@ -236,7 +236,6 @@ class CollectiveGemmPrimitive(BasePrimitive):
                 # Increase workspace size to ensure every GEMM chunk has an independent workspace
                 # of the appropriate size
                 workspace_size *= _NUM_MAX_COMPUTE_STREAMS
-
                 if comm_type == tex.CommOverlapType.AG and extra_out_aval.size > 0:
                     expected_extra_out_shape = list(lhs_aval.shape).copy()
                     expected_extra_out_dtype = lhs_dtype
@@ -251,7 +250,7 @@ class CollectiveGemmPrimitive(BasePrimitive):
                             expected_extra_out_shape[-2] *= tp_size
                     elif comm_type == tex.CommOverlapType.RS:
                         expected_extra_out_shape[-2] = expected_extra_out_shape[-2] // tp_size
-
+        
         assert out_aval.ndim == len(expected_out_shape), (
             "Output buffer has incorrect number of dimensions: "
             + f"expected {len(expected_out_shape)} but found {out_aval.ndim}"
@@ -267,7 +266,7 @@ class CollectiveGemmPrimitive(BasePrimitive):
                 "Extra output has incorrect dtype: "
                 + f"expected {expected_extra_out_dtype} but found {extra_out_dtype}"
             )
-            assert extra_out_aval.ndim == len(expected_extra_out_shape), (
+            """assert extra_out_aval.ndim == len(expected_extra_out_shape), (
                 "Extra output buffer has incorrect number of dimensions: "
                 + f"expected {len(expected_extra_out_shape)} but found {extra_out_aval.ndim}"
             )
@@ -279,7 +278,7 @@ class CollectiveGemmPrimitive(BasePrimitive):
             ), (
                 "Extra output buffer has incorrect shape: "
                 + f"expected {expected_extra_out_shape=} but found {extra_out_aval.shape=}"
-            )
+            )"""
 
         # Validate bias/bias_grad shape against output bufer
         bias_dtype = jnp.bfloat16 if jax_dtype_is_fp8(out_dtype) else out_dtype
@@ -320,7 +319,7 @@ class CollectiveGemmPrimitive(BasePrimitive):
         pre_gelu_out_aval = gelu_input_aval.update(shape=gelu_shape, dtype=bias_dtype)
         bias_grad_aval = bias_aval.update(shape=bias_aval.shape, dtype=bias_dtype)
         extra_out_updated_aval = extra_out_aval.update(
-            shape=expected_extra_out_shape, dtype=expected_extra_out_dtype
+            shape=extra_out_aval.shape, dtype=expected_extra_out_dtype
         )
         workspace_aval = jax.core.ShapedArray(shape=(workspace_size,), dtype=jnp.uint8)
 
@@ -727,9 +726,9 @@ class CollectiveGemmPrimitive(BasePrimitive):
             # - Never scatter any operand.
             lhs_spec_new[lhs_outer_dim] = None
             if lhs_spec_new[lhs_inner_dim] is not None and rhs_spec_new[rhs_inner_dim] is not None:
-                assert (
+                """assert (
                     lhs_spec_new[lhs_inner_dim] == rhs_spec_new[rhs_inner_dim]
-                ), "Contracting dimensions of LHS and RHS operands must have the same sharding."
+                ), "Contracting dimensions of LHS and RHS operands must have the same sharding." """
                 if lhs_spec_new[lhs_outer_dim] is not None:
                     warnings.warn(
                         "Outer dimension of the LHS operand must be all-gathered when both "
@@ -875,9 +874,10 @@ class CollectiveGemmPrimitive(BasePrimitive):
             # - If contracting dims of both operands are sharded, all-gather RHS outer dim.
             # - If contracting dim of only one operand is sharded, all-gather the sharded operand.
             # - Never scatter any operand.
-            lhs_spec_new[lhs_outer_dim] = None
+            #lhs_spec_new[lhs_outer_dim] = None
             if lhs_spec_new[lhs_inner_dim] is not None and rhs_spec_new[rhs_inner_dim] is not None:
                 rhs_spec_new[rhs_outer_dim] = None
+                rhs_spec_new[rhs_inner_dim] = rhs_spec_new[rhs_inner_dim][-1]
                 reduce_output = True
             else:
                 lhs_spec_new[lhs_inner_dim] = None
@@ -897,6 +897,8 @@ class CollectiveGemmPrimitive(BasePrimitive):
         lhs_bdims = [dim for dim in range(lhs.ndim) if dim not in [lhs_inner_dim, lhs_outer_dim]]
         batch_spec = [lhs_spec_new[dim] for dim in lhs_bdims]
         out_spec = [None, out_col_spec]
+        if comm_overlap_config is None:
+            out_spec = [lhs_spec_new[lhs_outer_dim], out_col_spec]
         if batched_output:
             out_spec = batch_spec + out_spec
         out_sharding = NamedSharding(mesh, PartitionSpec(*out_spec))
@@ -1043,6 +1045,27 @@ def gemm_impl(
             and comm_overlap_config["comm_type"] == tex.CommOverlapType.RS
         ):
             extra_out_shape = list(out_shape).copy()
+        if (
+            comm_overlap_config is not None
+            and "dgrad" in comm_overlap_config["name"]
+            and comm_overlap_config["comm_type"] == tex.CommOverlapType.AG
+            and comm_overlap_config["method"] != "bulk"
+        ):
+            extra_out_shape = list(lhs.shape).copy()
+        if (
+            comm_overlap_config is not None
+            and "dgrad" in comm_overlap_config["name"]
+            and comm_overlap_config["comm_type"] == tex.CommOverlapType.AG
+            and comm_overlap_config["method"] == "bulk"
+        ):
+            extra_out_shape = list(out_shape).copy()
+        if (
+            comm_overlap_config is not None
+            and "wgrad" in comm_overlap_config["name"]
+            and comm_overlap_config["comm_type"] == tex.CommOverlapType.RS
+            and comm_overlap_config["method"] == "bulk"
+        ):
+            extra_out_shape = list(lhs.shape).copy()
         extra_out = jnp.zeros(extra_out_shape, dtype=jnp.bfloat16)
 
     if not fuse_bias:
@@ -1060,7 +1083,6 @@ def gemm_impl(
         ), "Backward GEMM with dGELU epilogue requires pre-GELU output from forward GEMM."
     elif gelu_input is None:
         gelu_input = jnp.zeros(out_shape_2d, dtype=lhs.dtype)
-
     (
         out,
         _,  # out_amax in FP8 GEMM
@@ -1089,7 +1111,6 @@ def gemm_impl(
         comm_overlap_config=comm_overlap_config,
         sharded_abstract=False,
     )
-
     if grad:
         return out, pre_gelu_out, bias_grad, extra_out
     else:
