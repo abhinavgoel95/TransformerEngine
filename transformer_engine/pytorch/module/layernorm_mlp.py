@@ -64,6 +64,7 @@ from ..tensor.float8_tensor import (
     Float8Tensor,
 )
 from ..tensor.mxfp8_tensor import MXFP8Quantizer
+from ..tensor.hybrid_nvfp4_tensor import HybridNVFP4Quantizer
 from ..tensor.float8_blockwise_tensor import Float8BlockQuantizer
 from ._common import apply_normalization, WeightGradStore
 from ..cpu_offload import is_cpu_offload_enabled, mark_activation_offload
@@ -97,7 +98,7 @@ def _get_act_func_supported_list(recipe: Optional[Recipe] = None):
             "qgeglu": (tex.qgeglu, tex.dqgeglu, None),
             "srelu": (tex.srelu, tex.dsrelu, None),
         }
-    if recipe.delayed() or recipe.mxfp8():
+    if recipe.delayed() or recipe.mxfp8() or recipe.nvfp4():
         # Delayed scaling, fusion supported list: [tex.dbias_dgelu, tex.dbias_drelu, tex.dbias_dqgelu, tex.dbias_dsrelu]
         # MXFP8: [tex.dbias_dgelu, tex.dbias_drelu, tex.dbias_dqgelu, tex.dbias_dsrelu]
         return {
@@ -1883,7 +1884,10 @@ class LayerNormMLP(TransformerEngineBaseModule):
             fc2_input_quantizer = self.quantizers["scaling_fwd"][tex.FP8FwdTensors.GEMM2_INPUT]
             fc2_input_quantizer.set_usage(
                 rowwise=True,
-                columnwise=isinstance(fc2_input_quantizer, (MXFP8Quantizer, Float8BlockQuantizer)),
+                columnwise=isinstance(
+                    fc2_input_quantizer,
+                    (MXFP8Quantizer, Float8BlockQuantizer, HybridNVFP4Quantizer),
+                ),
             )
             fc1_input_quantizer.internal = True
             if fp8_output:
