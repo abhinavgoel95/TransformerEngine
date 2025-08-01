@@ -22,35 +22,6 @@
 
 namespace {
 
-/* Use CUDA const memory to store scalar 1 and 0 for cublas usage
-*/
-__device__ __constant__ float one_device;
-__device__ __constant__ float zero_device;
-
-inline float* GetScalarOne() {
-  static std::once_flag init_flag;
-  std::call_once(init_flag, []() {
-    float one = 1.0f;
-    C10_CUDA_CHECK(cudaMemcpyToSymbol(one_device, &one, sizeof(float)));
-  });
-  // return address by cudaGetSymbolAddress
-  float* dev_ptr;
-  C10_CUDA_CHECK(cudaGetSymbolAddress((void**)&dev_ptr, one_device));
-  return dev_ptr;
-}
-
-inline float* GetScalarZero() {
-  static std::once_flag init_flag;
-  std::call_once(init_flag, []() {
-    float zero = 0.0f;
-    C10_CUDA_CHECK(cudaMemcpyToSymbol(zero_device, &zero, sizeof(float)));
-  });
-  // return address by cudaGetSymbolAddress
-  float* dev_ptr;
-  C10_CUDA_CHECK(cudaGetSymbolAddress((void**)&dev_ptr, zero_device));
-  return dev_ptr;
-}
-
 cudaDataType_t get_cuda_dtype(const transformer_engine::DType t) {
   using namespace transformer_engine;
   switch (t) {
@@ -121,7 +92,11 @@ GemmParam CanonicalizeGemmInput(const transformer_engine::Tensor &A, const cubla
   NVTE_CHECK(
       A.scaling_mode == B.scaling_mode ||
           (A.scaling_mode == NVTE_BLOCK_SCALING_1D && B.scaling_mode == NVTE_BLOCK_SCALING_2D) ||
-          (A.scaling_mode == NVTE_BLOCK_SCALING_2D && B.scaling_mode == NVTE_BLOCK_SCALING_1D),
+          (A.scaling_mode == NVTE_BLOCK_SCALING_2D && B.scaling_mode == NVTE_BLOCK_SCALING_1D) ||
+          (A.scaling_mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING &&
+           B.scaling_mode == NVTE_MXFP8_1D_SCALING) ||
+          (A.scaling_mode == NVTE_MXFP8_1D_SCALING &&
+           B.scaling_mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING),
       "Inputs A and B to GEMM need to have compatible scaling modes, but got A.scaling_mode = " +
           to_string(A.scaling_mode) + ", B.scaling_mode = " + to_string(B.scaling_mode));
   NVTE_CHECK(A.has_data() || A.has_columnwise_data(), "Input A does not hold any data!");
@@ -136,12 +111,15 @@ GemmParam CanonicalizeGemmInput(const transformer_engine::Tensor &A, const cubla
   // Only a TN layout GEMM with hybrid/full NVFP4 scaling indicates an NVFP4 GEMM.
   const auto is_A_nvfp4 = is_nvfp_scaling(A.scaling_mode);
   const auto is_B_nvfp4 = is_nvfp_scaling(B.scaling_mode);
-  const auto nvfp4_gemm = is_A_nvfp4 && is_B_nvfp4;
+  const auto TN = transA != CUBLAS_OP_N && transB == CUBLAS_OP_N;
+  const auto nvfp4_gemm = is_A_nvfp4 && is_B_nvfp4 && TN;
 
   // MXFP8 GEMM is either for a `non-TN layout NVFP4 scaling (backward)` or `MXFP8 scaling`.
-  const auto is_A_mxfp8 = is_mxfp_scaling(A.scaling_mode);
-  const auto is_B_mxfp8 = is_mxfp_scaling(B.scaling_mode);
-  const auto mxfp8_gemm = is_A_mxfp8 && is_B_mxfp8;
+  const auto is_A_mxfp8 =
+      is_mxfp_scaling(A.scaling_mode) || (is_hybrid_nvfp4_scaling(A.scaling_mode) && !TN);
+  const auto is_B_mxfp8 =
+      is_mxfp_scaling(B.scaling_mode) || (is_hybrid_nvfp4_scaling(B.scaling_mode) && !TN);
+  const auto mxfp8_gemm = is_A_mxfp8 && is_B_mxfp8 && !nvfp4_gemm;
 
   // Configure A matrix
   if (is_tensor_scaling(A.scaling_mode)) {
@@ -164,15 +142,12 @@ GemmParam CanonicalizeGemmInput(const transformer_engine::Tensor &A, const cubla
       }
     }
   } else if (nvfp4_gemm) {
-    if (is_A_transposed) {
-      NVTE_CHECK(A.has_data(), "Input A is missing row-wise usage");
-    } else {
-      NVTE_CHECK(A.has_columnwise_data(), "Input A is missing column-wise usage");
-    }
-    ret.A = is_A_transposed ? A.data.dptr : A.columnwise_data.dptr;
+    NVTE_CHECK(is_A_transposed, "Incorrect GEMM layout for NVFP4");
+    NVTE_CHECK(A.has_data(), "Input A is missing row-wise usage");
+    ret.A = A.data.dptr;
     ret.transA = CUBLAS_OP_T;
-    ret.Atype = is_A_transposed ? A.data.dtype : A.columnwise_data.dtype;
-    ret.A_scale_inv = is_A_transposed ? A.scale_inv.dptr : A.columnwise_scale_inv.dptr;
+    ret.Atype = A.data.dtype;
+    ret.A_scale_inv = A.scale_inv.dptr;
     ret.lda = k;
   } else if (mxfp8_gemm) {
     // MXFP8 GEMM. Either for MXFP8 recipe or backward of Hybrid NVFP4 recipe.
@@ -235,15 +210,12 @@ GemmParam CanonicalizeGemmInput(const transformer_engine::Tensor &A, const cubla
       }
     }
   } else if (nvfp4_gemm) {
-    if (is_B_transposed) {
-      NVTE_CHECK(B.has_columnwise_data(), "Input B is missing column-wise usage");
-    } else {
-      NVTE_CHECK(B.has_data(), "Input B is missing row-wise usage");
-    }
-    ret.B = is_B_transposed ? B.columnwise_data.dptr : B.data.dptr;
+    NVTE_CHECK(!is_B_transposed, "Incorrect GEMM layout for NVFP4");
+    NVTE_CHECK(B.has_data(), "Input B is missing row-wise usage");
+    ret.B = B.data.dptr;
     ret.transB = CUBLAS_OP_N;
-    ret.Btype = is_B_transposed ? B.columnwise_data.dtype : B.data.dtype;
-    ret.B_scale_inv = is_B_transposed ? B.columnwise_scale_inv.dptr : B.scale_inv.dptr;
+    ret.Btype = B.data.dtype;
+    ret.B_scale_inv = B.scale_inv.dptr;
     ret.ldb = k;
   } else if (mxfp8_gemm) {
     // MXFP8
@@ -380,10 +352,6 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
   float zero = 0.0;
   float beta = (accumulate) ? one : zero;
 
-  // default case is that alpha_ptr and beta_ptr are both host pointers
-  void *alpha_ptr = static_cast<const void *>(&one);
-  void *beta_ptr = static_cast<const void *>(&beta);
-
   cublasLtHandle_t handle = cublasHandleManager::Instance().GetHandle();
 
   cublasLtMatmulDesc_t operationDesc = nullptr;
@@ -424,7 +392,8 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
   // set fp8/fp4 attributes -- input and output types should already be set to fp8/fp4
   // as appropriate. Note: gelu fusion isn't available right now, and we don't need
   // amax(D) either (next op is high precision).
-  const bool mxfp8_gemm = !use_fp4 && is_mxfp_scaling(inputA->scaling_mode);
+  const bool mxfp8_gemm = !use_fp4 && (is_mxfp_scaling(inputA->scaling_mode) ||
+                                       is_hybrid_nvfp4_scaling(inputA->scaling_mode));
 
   if (use_fp8 || use_fp4) {
     // Fast accumulation is only supported for FP8.
@@ -473,23 +442,6 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
             sizeof(dummy_a_vec_stride)));
       }
     } else if (use_fp4) {  // NVFP4 GEMM
-      // make sure alpha beta computation dtype remains fp32 by CUBLASLT_MATMUL_DESC_SCALE_TYPE
-      cublasDataType_t scale_type = CUDA_R_32F;
-      NVTE_CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(
-          operationDesc, CUBLASLT_MATMUL_DESC_SCALE_TYPE, &scale_type, sizeof(scale_type)));
-
-      // Set pointer mode: alpha and beta are both device pointers
-      // https://docs.nvidia.com/cuda/cublas/#cublasltpointermode-t
-      cublasLtPointerMode_t pointer_mode = CUBLASLT_POINTER_MODE_DEVICE;
-      NVTE_CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(
-          operationDesc, CUBLASLT_MATMUL_DESC_POINTER_MODE, &pointer_mode, sizeof(pointer_mode)));
-
-      // TODO(zhongbo): find a smart way to pass in alpha as a global tensor scale 
-      // TN case: alpha = A.secondary_rowwise_scale_inv * B.secondary_rowwise_scale_inv
-      // NVFP4 has scalar secondary scale inv
-      alpha_ptr = GetScalarOne();
-      beta_ptr = accumulate ? GetScalarOne() : GetScalarZero();
-
       fp8e4m3 *A_scale_inverse = reinterpret_cast<fp8e4m3 *>(param.A_scale_inv);
       fp8e4m3 *B_scale_inverse = reinterpret_cast<fp8e4m3 *>(param.B_scale_inv);
       NVTE_CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(operationDesc,
@@ -698,10 +650,10 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
 
   // D = alpha * (A * B) + beta * C
   NVTE_CHECK_CUBLAS(cublasLtMatmul(handle, operationDesc,
-                                   alpha_ptr,                               /* alpha */
+                                   static_cast<const void *>(&one),         /* alpha */
                                    param.A,                                 /* A */
                                    Adesc, param.B,                          /* B */
-                                   Bdesc, beta_ptr,                         /* beta */
+                                   Bdesc, static_cast<const void *>(&beta), /* beta */
                                    C,                                       /* C */
                                    Cdesc, D,                                /* D */
                                    Ddesc, &heuristicResult.algo,            /* algo */

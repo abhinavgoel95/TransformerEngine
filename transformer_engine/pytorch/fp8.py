@@ -54,11 +54,6 @@ def check_mxfp8_support() -> Tuple[bool, str]:
         return True, ""
     return False, "Device compute capability 10.0 or higher required for MXFP8 execution."
 
-def check_nvfp4_support() -> Tuple[bool, str]:
-    """Return if nvfp4 support is available"""
-    if get_device_compute_capability() >= (10, 0):  # blackwell and above
-        return True, ""
-    return False, "Device compute capability 10.0 or higher required for NVFP4 execution."
 
 def check_fp8_block_scaling_support() -> Tuple[bool, str]:
     """Return if fp8 block scaling support is available"""
@@ -199,13 +194,6 @@ class FP8GlobalStateManager:
                 check_fp8_block_scaling_support()
             )
         return cls.fp8_block_scaling_available, cls.reason_for_no_fp8_block_scaling
-
-    @classmethod
-    def is_nvfp4_available(cls) -> Tuple[bool, str]:
-        """Return if NVFP4 support is available."""
-        if cls.nvfp4_available is None:
-            cls.nvfp4_available, cls.reason_for_no_nvfp4 = check_nvfp4_support()
-        return cls.nvfp4_available, cls.reason_for_no_nvfp4
 
     @staticmethod
     def get_meta_tensor_key(forward: bool = True) -> str:
@@ -483,9 +471,6 @@ class FP8GlobalStateManager:
             if isinstance(fp8_recipe, Float8BlockScaling):
                 fp8_block_available, reason_for_no_fp8_block = cls.is_fp8_block_scaling_available()
                 assert fp8_block_available, reason_for_no_fp8_block
-            if isinstance(fp8_recipe, NVFP4BlockScaling):
-                nvfp4_available, reason_for_no_nvfp4 = cls.is_nvfp4_available()
-                assert nvfp4_available, reason_for_no_nvfp4
 
     @classmethod
     def fp8_autocast_exit(cls, enabled: bool, _graph: bool) -> None:
@@ -988,6 +973,74 @@ class MXFP8BlockScalingRecipeState(RecipeState):
         return [MXFP8Quantizer(self.dtype) for i in range(self.num_quantizers)]
 
 
+class HybridNVFP4BlockScalingRecipeState(RecipeState):
+    """Configuration for HybridNVFP4 quantization.
+
+    HybridNVFP4 quantization does not require state.
+
+    """
+
+    recipe: HybridNVFP4BlockScaling
+    mode: str
+    dtype: tex.DType
+
+    def __init__(
+        self,
+        recipe: HybridNVFP4BlockScaling,
+        *,
+        mode: str,
+        num_quantizers: int = 1,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        self.recipe = recipe
+        self.mode = mode
+        self.num_quantizers = num_quantizers
+        self.dtype = get_fp8_te_dtype(recipe, mode == "forward")
+
+        # Allocate buffers
+        if device is None:
+            device = torch.device("cuda")
+
+    def make_quantizers(self) -> list:
+        from .tensor.hybrid_nvfp4_tensor import HybridNVFP4Quantizer
+
+        return [HybridNVFP4Quantizer(self.dtype) for i in range(self.num_quantizers)]
+
+
+class NVFP4BlockScalingRecipeState(RecipeState):
+    """Configuration for HybridNVFP4 quantization.
+
+    HybridNVFP4 quantization does not require state.
+
+    """
+
+    recipe: NVFP4BlockScaling
+    mode: str
+    dtype: tex.DType
+
+    def __init__(
+        self,
+        recipe: NVFP4BlockScaling,
+        *,
+        mode: str,
+        num_quantizers: int = 1,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        self.recipe = recipe
+        self.mode = mode
+        self.num_quantizers = num_quantizers
+        self.dtype = get_fp8_te_dtype(recipe, mode == "forward")
+
+        # Allocate buffers
+        if device is None:
+            device = torch.device("cuda")
+
+    def make_quantizers(self) -> list:
+        from .tensor.nvfp4_tensor import NVFP4Quantizer
+
+        return [NVFP4Quantizer() for i in range(self.num_quantizers)]
+
+
 class Float8BlockScalingRecipeState(RecipeState):
     """Configuration for Float8BlockScaling quantization.
 
@@ -1091,76 +1144,3 @@ class Float8BlockScalingRecipeState(RecipeState):
                 ]
             )
         )
-
-
-class HybridNVFP4BlockScalingRecipeState(RecipeState):
-    """Configuration for HybridNVFP4 quantization.
-
-    HybridNVFP4 quantization does not require state.
-
-    """
-
-    recipe: HybridNVFP4BlockScaling
-    mode: str
-    dtype: tex.DType
-
-    def __init__(
-        self,
-        recipe: HybridNVFP4BlockScaling,
-        *,
-        mode: str,
-        num_quantizers: int = 1,
-        device: Optional[torch.device] = None,
-    ) -> None:
-        
-        # TODO(nvfp4 hybrid): This hybrid nvfp4 recipe is not fully supported, will raise error to ban it for now
-        raise NotImplementedError("Hybrid NVFP4 recipe is not fully supported, will raise error to ban it for now")
-
-        self.recipe = recipe
-        self.mode = mode
-        self.num_quantizers = num_quantizers
-        self.dtype = get_fp8_te_dtype(recipe, mode == "forward")
-
-        # Allocate buffers
-        if device is None:
-            device = torch.device("cuda")
-
-    def make_quantizers(self) -> list:
-
-        from .tensor.hybrid_nvfp4_tensor import HybridNVFP4Quantizer
-
-        return [HybridNVFP4Quantizer(self.dtype) for i in range(self.num_quantizers)]
-
-
-class NVFP4BlockScalingRecipeState(RecipeState):
-    """Configuration for HybridNVFP4 quantization.
-
-    HybridNVFP4 quantization does not require state.
-
-    """
-
-    recipe: NVFP4BlockScaling
-    mode: str
-    dtype: tex.DType
-
-    def __init__(
-        self,
-        recipe: NVFP4BlockScaling,
-        *,
-        mode: str,
-        num_quantizers: int = 1,
-        device: Optional[torch.device] = None,
-    ) -> None:
-        self.recipe = recipe
-        self.mode = mode
-        self.num_quantizers = num_quantizers
-        self.dtype = get_fp8_te_dtype(recipe, mode == "forward")
-
-        # Allocate buffers
-        if device is None:
-            device = torch.device("cuda")
-
-    def make_quantizers(self) -> list:
-        from .tensor.nvfp4_tensor import NVFP4Quantizer
-
-        return [NVFP4Quantizer() for i in range(self.num_quantizers)]

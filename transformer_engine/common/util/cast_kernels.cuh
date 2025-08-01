@@ -2078,10 +2078,6 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
       nvfp4_quantize<IS_ACT, ParamOP, OP>(*input_tensor, &noop_tensor, output_tensor, stream);
       break;
     }
-    case NVTE_NVFP4_1D_SCALING: {
-      // TODO(zhongbo): integrate cast transpose from kitchen
-      break;
-    }
     case NVTE_BLOCK_SCALING_2D: {
       // TODO(kwyss): IS_BIAS, IS_DACT, IS_ACT, ParamOP, OP parameters support.
       NVTE_CHECK((!IS_DBIAS && !IS_DACT && !IS_ACT),

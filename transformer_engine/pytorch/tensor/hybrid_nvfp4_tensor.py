@@ -35,10 +35,6 @@ class HybridNVFP4Quantizer(Quantizer):
         rowwise: bool = True,
         columnwise: bool = True,
     ) -> None:
-
-       # TODO(nvfp4 hybrid): This hybrid nvfp4 recipe is not fully supported, will raise error to ban it for now
-        raise NotImplementedError("Hybrid NVFP4 recipe is not fully supported, will raise error to ban it for now")
-
         super().__init__(rowwise=rowwise, columnwise=columnwise)
         self.dtype = fp8_dtype
 
@@ -142,7 +138,8 @@ class HybridNVFP4Quantizer(Quantizer):
         )
 
     def calibrate(self, tensor: torch.Tensor) -> None:
-        return
+        # TODO(ksivamani): No calibration?
+        pass
 
     def _get_compatible_recipe(self) -> Union[type[Recipe], None]:
         return HybridNVFP4BlockScaling

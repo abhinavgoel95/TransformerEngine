@@ -51,7 +51,7 @@ inline bool is_delayed_tensor_scaling(const NVTEScalingMode &mode) {
 inline bool is_mxfp_scaling(const NVTEScalingMode &mode) { return mode == NVTE_MXFP8_1D_SCALING; }
 
 inline bool is_nvfp_scaling(const NVTEScalingMode &mode) {
-  return mode == NVTE_NVFP4_1D_SCALING;
+  return mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING;
 }
 
 inline bool is_hybrid_nvfp4_scaling(const NVTEScalingMode &mode) {
@@ -119,10 +119,6 @@ struct Tensor {
   SimpleTensor scale;
   SimpleTensor scale_inv;
   SimpleTensor columnwise_scale_inv;
-  // auxililary scaling factor tensors
-  // reserved for secondary scaling scheme like NVFP4
-  SimpleTensor secondary_scale_inv;
-  SimpleTensor secondary_columnwise_scale_inv;
 
   NVTEScalingMode scaling_mode;
   NVTETensor nvte_tensor;
@@ -134,8 +130,6 @@ struct Tensor {
         scale(nullptr, {1}, DType::kFloat32),
         scale_inv(nullptr, {1}, DType::kFloat32),
         columnwise_scale_inv(nullptr, {1}, DType::kFloat32),
-        secondary_scale_inv(nullptr, {1}, DType::kFloat32),
-        secondary_columnwise_scale_inv(nullptr, {1}, DType::kFloat32),
         scaling_mode(NVTE_DELAYED_TENSOR_SCALING),
         nvte_tensor(0) {}
 
@@ -146,8 +140,6 @@ struct Tensor {
     scale.clear();
     scale_inv.clear();
     columnwise_scale_inv.clear();
-    secondary_scale_inv.clear();
-    secondary_columnwise_scale_inv.clear();
     scaling_mode = NVTE_DELAYED_TENSOR_SCALING;
   }
 
@@ -212,10 +204,6 @@ struct Tensor {
           return data.shape;
         }
         break;
-      // TN layout scaling scheme, requireing transpose shape of columnwise data
-      // NVFP4 1D scaling on Blackwell
-      // NV Block scaling on Hopper
-      case NVTE_NVFP4_1D_SCALING:
       case NVTE_BLOCK_SCALING_1D:
       case NVTE_BLOCK_SCALING_2D: {
         if (!has_data() && has_columnwise_data()) {

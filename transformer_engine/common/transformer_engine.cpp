@@ -494,12 +494,6 @@ void nvte_set_tensor_param(NVTETensor *tensor, NVTETensorParam param_name,
     case kNVTEColumnwiseScaleInv:
       t->columnwise_scale_inv = *param;
       break;
-    case kNVTESecondaryScaleInv:
-      t->secondary_scale_inv = *param;
-      break;
-    case kNVTESecondaryColumnwiseScaleInv:
-      t->secondary_columnwise_scale_inv = *param;
-      break;
     default:
       NVTE_ERROR("Unknown tensor parameter!");
   }
@@ -523,10 +517,6 @@ NVTEBasicTensor nvte_get_tensor_param(const NVTETensor tensor, NVTETensorParam p
       return t.scale_inv;
     case kNVTEColumnwiseScaleInv:
       return t.columnwise_scale_inv;
-    case kNVTESecondaryScaleInv:
-      return t.secondary_scale_inv;
-    case kNVTESecondaryColumnwiseScaleInv:
-      return t.secondary_columnwise_scale_inv;
     default:
       NVTE_ERROR("Unknown tensor parameter!");
   }

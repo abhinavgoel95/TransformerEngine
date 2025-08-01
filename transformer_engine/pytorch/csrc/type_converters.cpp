@@ -116,7 +116,6 @@ TensorWrapper NVTETensorFromFloat8BlockwiseQTensor(py::handle tensor, Quantizer 
   return ret;
 }
 
-
 TensorWrapper NVTETensorFromHybridNVFP4Tensor(py::handle tensor, Quantizer *quantizer) {
   auto ret = TensorWrapper(NVTE_HYBRID_NVFP4_MXFP8_SCALING);
 
@@ -150,34 +149,28 @@ TensorWrapper NVTETensorFromHybridNVFP4Tensor(py::handle tensor, Quantizer *quan
 }
 
 TensorWrapper NVTETensorFromNVFP4Tensor(py::handle tensor, Quantizer *quantizer) {
-  const DType dtype = tensor.attr("_fp4_dtype").cast<DType>();
-
   auto ret = TensorWrapper(NVTE_NVFP4_1D_SCALING);
 
   bool rowwise_usage = !(tensor.attr("_rowwise_data").is_none());
   bool columnwise_usage = !(tensor.attr("_columnwise_data").is_none());
 
-  NVTE_CHECK(rowwise_usage || columnwise_usage, "No data found for NVFP4 Tensor.");
+  NVTE_CHECK(rowwise_usage || columnwise_usage, "No data found for Hybrid NVFP4 Tensor.");
 
   // Row-scaled data
   if (rowwise_usage) {
     const auto &data = tensor.attr("_rowwise_data").cast<at::Tensor>();
     const auto &scale_inv = tensor.attr("_rowwise_scale_inv").cast<at::Tensor>();
-    const auto &secondary_scale_inv = tensor.attr("_per_tensor_rowwise_scale_inv").cast<at::Tensor>();
-    ret.set_rowwise_data(data.data_ptr(), dtype, getTensorShape(data));
+    ret.set_rowwise_data(data.data_ptr(), DType::kFloat4E2M1, getTensorShape(data));
     ret.set_rowwise_scale_inv(scale_inv.data_ptr(), DType::kFloat8E4M3, getTensorShape(scale_inv));
-    ret.set_secondary_scale_inv(secondary_scale_inv.data_ptr(), DType::kFloat32, getTensorShape(secondary_scale_inv));
   }
 
   // Column-scaled data
   if (columnwise_usage) {
     const auto &data = tensor.attr("_columnwise_data").cast<at::Tensor>();
     const auto &scale_inv = tensor.attr("_columnwise_scale_inv").cast<at::Tensor>();
-    const auto &secondary_columnwise_scale_inv = tensor.attr("_per_tensor_columnwise_scale_inv").cast<at::Tensor>();
     ret.set_columnwise_data(data.data_ptr(), DType::kFloat4E2M1, getTensorShape(data));
     ret.set_columnwise_scale_inv(scale_inv.data_ptr(), DType::kFloat8E4M3,
                                  getTensorShape(scale_inv));
-    ret.set_secondary_columnwise_scale_inv(secondary_columnwise_scale_inv.data_ptr(), DType::kFloat32, getTensorShape(secondary_columnwise_scale_inv))
   }
 
   // Quantizer state
