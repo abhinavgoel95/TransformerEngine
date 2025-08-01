@@ -36,6 +36,9 @@ class HybridNVFP4Quantizer(Quantizer):
         columnwise: bool = True,
     ) -> None:
 
+       # TODO(nvfp4 hybrid): This hybrid nvfp4 recipe is not fully supported, will raise error to ban it for now
+        raise NotImplementedError("Hybrid NVFP4 recipe is not fully supported, will raise error to ban it for now")
+
         super().__init__(rowwise=rowwise, columnwise=columnwise)
         self.dtype = fp8_dtype
 

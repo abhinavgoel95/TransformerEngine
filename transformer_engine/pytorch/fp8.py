@@ -1112,6 +1112,9 @@ class HybridNVFP4BlockScalingRecipeState(RecipeState):
         num_quantizers: int = 1,
         device: Optional[torch.device] = None,
     ) -> None:
+        
+        # TODO(nvfp4 hybrid): This hybrid nvfp4 recipe is not fully supported, will raise error to ban it for now
+        raise NotImplementedError("Hybrid NVFP4 recipe is not fully supported, will raise error to ban it for now")
 
         self.recipe = recipe
         self.mode = mode

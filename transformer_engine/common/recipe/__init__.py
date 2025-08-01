@@ -405,9 +405,8 @@ class HybridNVFP4BlockScaling(Recipe):
     fp8_mha: bool = False
 
     def __post_init__(self) -> None:
-        assert (
-            self.fp8_format != Format.HYBRID
-        ), "Hybrid training requires forward and backward pass in FP8."
+        # TODO(nvfp4 hybrid): This hybrid nvfp4 recipe is not fully supported, will raise error to ban it for now
+        raise NotImplementedError("Hybrid NVFP4 recipe is not fully supported, will raise error to ban it for now")
 
     def __repr__(self) -> str:
         return f"recipe_type={self.__class__.__name__}, format={str(self.fp8_format).split('.')[1]}"

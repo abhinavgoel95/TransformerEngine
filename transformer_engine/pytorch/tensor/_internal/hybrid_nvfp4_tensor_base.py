@@ -78,6 +78,9 @@ class HybridNVFP4TensorBase(QuantizedTensorBase):
         **kwargs,
     ):
 
+        # TODO(nvfp4 hybrid): This hybrid nvfp4 recipe is not fully supported, will raise error to ban it for now
+        raise NotImplementedError("Hybrid NVFP4 recipe is not fully supported, will raise error to ban it for now")
+
         instance = super().__new__(cls, *args, **kwargs)
         instance._rowwise_data = rowwise_data
         instance._columnwise_data = columnwise_data
