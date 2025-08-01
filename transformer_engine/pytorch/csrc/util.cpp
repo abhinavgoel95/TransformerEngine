@@ -20,6 +20,9 @@ std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrap
 
   NVTE_CHECK(input.element_size() == 1, "8-bit input required for swizzling scaling factors.");
 
+  // For NVFP4, the transposed output also needs rowwise swizzle.
+  rowwise = rowwise || input.scaling_mode() == NVTE_NVFP4_1D_SCALING;
+
   NVTEBasicTensor scale_inv;
   if (rowwise) {
     scale_inv = input.get_rowwise_scale_inv();

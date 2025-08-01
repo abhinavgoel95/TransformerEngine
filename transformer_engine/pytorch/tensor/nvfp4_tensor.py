@@ -81,7 +81,8 @@ class NVFP4Quantizer(Quantizer):
             f" {NVFP4_BLOCK_SCALING_SIZE}"
         )
 
-        assert math.prod(shape[:-1]) % NVFP4_BLOCK_SCALING_SIZE == 0, (
+        flat_first_dim = math.prod(shape[:-1])
+        assert flat_first_dim % NVFP4_BLOCK_SCALING_SIZE == 0, (
             f"Incorrect shape {shape} for NVFP4. Tensor dims must be divisible by"
             f" {NVFP4_BLOCK_SCALING_SIZE}"
         )
@@ -91,7 +92,7 @@ class NVFP4Quantizer(Quantizer):
 
         # Allocate block scale inverse. E4M3 format.
         scale_inv = torch.zeros(
-            round_up_to_nearest_multiple(math.prod(shape[:-1]), 128),
+            round_up_to_nearest_multiple(flat_first_dim, 128),
             round_up_to_nearest_multiple(shape[-1] // NVFP4_BLOCK_SCALING_SIZE, 4),
             dtype=torch.uint4,
             device=device,
@@ -104,10 +105,12 @@ class NVFP4Quantizer(Quantizer):
         columnwise_data = None
         columnwise_scale_inv = None
         if self.columnwise_usage:
-            columnwise_data = torch.empty_like(data)
+            columnwise_data = torch.empty(
+                shape[-1], flat_first_dim, dtype=torch.uint4, device=device
+            )
             columnwise_scale_inv = torch.zeros(
-                round_up_to_nearest_multiple(math.prod(shape[:-1]) // NVFP4_BLOCK_SCALING_SIZE, 4),
                 round_up_to_nearest_multiple(shape[-1], 128),
+                round_up_to_nearest_multiple(flat_first_dim // NVFP4_BLOCK_SCALING_SIZE, 4),
                 dtype=torch.uint4,
                 device=device,
             )

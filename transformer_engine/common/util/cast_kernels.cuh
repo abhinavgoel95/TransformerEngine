@@ -2074,6 +2074,12 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
           workspace_tensor, stream);
       break;
     }
+    case NVTE_NVFP4_1D_SCALING: {
+      NVTE_CHECK(!(output_tensor->has_columnwise_data()),
+                 "Columnwise scaled output not supported.");
+      nvfp4_quantize<IS_ACT, ParamOP, OP>(*input_tensor, &noop_tensor, output_tensor, stream);
+      break;
+    }
     case NVTE_HYBRID_NVFP4_MXFP8_SCALING: {
       nvfp4_quantize<IS_ACT, ParamOP, OP>(*input_tensor, &noop_tensor, output_tensor, stream);
       break;

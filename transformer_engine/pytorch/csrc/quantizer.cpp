@@ -1358,7 +1358,8 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::create_tensor(const std::ve
   if (columnwise_usage) {
     const std::vector<int64_t> scale_inv_shape_int64(columnwise_scale_inv_shape.begin(),
                                                      columnwise_scale_inv_shape.end());
-    columnwise_data_tensor = at::empty(shape_int64, bit8_tensor_opts);
+    const auto transpose_shape_int64 = make_transpose_shape<int64_t>(shape_int64);
+    columnwise_data_tensor = at::empty(transpose_shape_int64, bit8_tensor_opts);
     columnwise_scale_inv_tensor = at::zeros(scale_inv_shape_int64, bit8_tensor_opts);
   }
 
@@ -1471,7 +1472,8 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
     if (!columnwise_data) {
       const std::vector<int64_t> shape_int64(shape.begin(), shape.end());
       const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
-      columnwise_data = at::empty(shape_int64, opts);
+      const auto transpose_shape_int64 = make_transpose_shape<int64_t>(shape_int64);
+      columnwise_data = at::empty(transpose_shape_int64, opts);
       tensor.attr("_columnwise_data") = *columnwise_data;
     }
     if (!columnwise_scale_inv) {
@@ -1510,6 +1512,21 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
   return {std::move(out_cpp), std::move(tensor)};
 }
 
+// This can be used once the 2x cast output kernel is ready.
+// void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
+//                               const std::optional<TensorWrapper>& noop_flag) {
+//   if (input.numel() == 0) {
+//     return;
+//   }
+//   QuantizationConfigWrapper quant_config;
+//   if (noop_flag) {
+//     quant_config.set_noop_tensor(noop_flag->data());
+//   }
+//   NVTE_SCOPED_GIL_RELEASE({
+//     nvte_quantize_v2(input.data(), out.data(), quant_config, at::cuda::getCurrentCUDAStream());
+//   });
+// }
+
 void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
                               const std::optional<TensorWrapper>& noop_flag) {
   if (input.numel() == 0) {
@@ -1519,8 +1536,48 @@ void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
   if (noop_flag) {
     quant_config.set_noop_tensor(noop_flag->data());
   }
+
+  if (out.columnwise_dptr() == nullptr) {
+    NVTE_SCOPED_GIL_RELEASE({
+      nvte_quantize_v2(input.data(), out.data(), quant_config, at::cuda::getCurrentCUDAStream());
+    });
+    return;
+  }
+
+  // Allocate tensor for high precision tranpose output.
+  const auto nvte_shape = input.shape();
+  const auto nvte_transpose_shape = out.get_columnwise_data().shape;
+  std::vector<int64_t> transpose_shape_int64;
+  for (size_t i = 0; i < nvte_transpose_shape.ndim; ++i) {
+    transpose_shape_int64.push_back(nvte_transpose_shape.data[i]);
+  }
+  const auto opts = at::TensorOptions().dtype(GetATenDType(input.dtype())).device(torch::kCUDA);
+  at::Tensor input_transpose_torch = at::empty(transpose_shape_int64, opts);
+  auto input_transpose = makeTransformerEngineTensor(input_transpose_torch);
+
+  // Since the 2x output kernel is not supported for NVFP4 we do the following instead:
+  // 1. Transpose input tensor in high precision.
+  // 2. Use the nvfp4 1x output rowwise quantize kernel to generate rowwise quantized output.
+  // 3. Use the nvfp4 1x output rowwise quantize kernel to generate columnwise quantized output
+  //    from the output of transpose in 1.
+  TensorWrapper rowwise_quantized(NVTE_NVFP4_1D_SCALING);
+  rowwise_quantized.set_rowwise_data(out.dptr(), DType::kFloat4E2M1, nvte_shape);
+  rowwise_quantized.set_rowwise_scale_inv(out.get_rowwise_scale_inv().data_ptr, DType::kFloat8E4M3,
+                                          out.scale_inv_shape());
+
+  TensorWrapper columnwise_quantized(NVTE_NVFP4_1D_SCALING);
+  columnwise_quantized.set_rowwise_data(out.columnwise_dptr(), DType::kFloat4E2M1,
+                                        nvte_transpose_shape);
+  columnwise_quantized.set_rowwise_scale_inv(out.get_columnwise_scale_inv().data_ptr,
+                                             DType::kFloat8E4M3,
+                                             out.get_columnwise_scale_inv().shape);
+
   NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_v2(input.data(), out.data(), quant_config, at::cuda::getCurrentCUDAStream());
+    nvte_transpose(input.data(), input_transpose.data(), at::cuda::getCurrentCUDAStream());
+    nvte_quantize_v2(input.data(), rowwise_quantized.data(), quant_config,
+                     at::cuda::getCurrentCUDAStream());
+    nvte_quantize_v2(input_transpose.data(), columnwise_quantized.data(), quant_config,
+                     at::cuda::getCurrentCUDAStream());
   });
 }
 
@@ -1532,10 +1589,11 @@ std::vector<size_t> NVFP4Quantizer::get_scale_shape(const std::vector<size_t>& s
   }
 
   auto last_dim = shape.back();
+  auto flat_first_dim = numel / last_dim;
 
   NVTE_CHECK(last_dim % NVFP4_BLOCK_SIZE == 0, "Last dim for NVFP4 must be divisible by ",
              NVFP4_BLOCK_SIZE, " (got dim=", last_dim, ")");
-  NVTE_CHECK((numel / last_dim) % NVFP4_BLOCK_SIZE == 0,
+  NVTE_CHECK(flat_first_dim % NVFP4_BLOCK_SIZE == 0,
              "NVFP4 requires tensor dims that are divisible by ", NVFP4_BLOCK_SIZE,
              " (got shape=", shape, ")");
 
@@ -1545,13 +1603,13 @@ std::vector<size_t> NVFP4Quantizer::get_scale_shape(const std::vector<size_t>& s
 
   if (rowwise_usage) {
     // rowwise scaling factor shape
-    size_t sinv0 = roundup(numel / last_dim, 128);
+    size_t sinv0 = roundup(flat_first_dim, 128);
     size_t sinv1 = roundup(last_dim / NVFP4_BLOCK_SIZE, 4);
     scale_shape = {sinv0, sinv1};
   } else {
     // columnwise scaling factor shape
-    size_t sinv0 = roundup(numel / (last_dim * NVFP4_BLOCK_SIZE), 4);
-    size_t sinv1 = roundup(last_dim, 128);
+    size_t sinv0 = roundup(last_dim, 128);
+    size_t sinv1 = roundup(flat_first_dim / NVFP4_BLOCK_SIZE, 4);
     scale_shape = {sinv0, sinv1};
   }
   return scale_shape;
