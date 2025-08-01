@@ -51,7 +51,7 @@ inline bool is_delayed_tensor_scaling(const NVTEScalingMode &mode) {
 inline bool is_mxfp_scaling(const NVTEScalingMode &mode) { return mode == NVTE_MXFP8_1D_SCALING; }
 
 inline bool is_nvfp_scaling(const NVTEScalingMode &mode) {
-  return mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING;
+  return mode == NVTE_NVFP4_1D_SCALING;
 }
 
 inline bool is_hybrid_nvfp4_scaling(const NVTEScalingMode &mode) {
