@@ -77,6 +77,7 @@ class HybridNVFP4TensorBase(QuantizedTensorBase):
         quantizer: Optional[Quantizer] = None,
         **kwargs,
     ):
+
         instance = super().__new__(cls, *args, **kwargs)
         instance._rowwise_data = rowwise_data
         instance._columnwise_data = columnwise_data

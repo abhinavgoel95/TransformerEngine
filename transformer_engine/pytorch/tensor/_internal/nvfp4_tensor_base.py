@@ -33,7 +33,9 @@ class _FromNVFP4Func(torch.autograd.Function):
 
         # Make sure FP8 data is in expected format
         if tensor._rowwise_data is not None:
-            return tex.dequantize(tensor, dtype)
+            # TODO(zhongbo): Implement this
+            raise NotImplementedError("Casting back from the rowwise not implemented yet!")
+            # return tex.dequantize(tensor, dtype)
         raise NotImplementedError("Casting back from the transpose not implemented yet!")
 
     @staticmethod
@@ -62,25 +64,33 @@ class NVFP4TensorBase(QuantizedTensorBase):
     _rowwise_scale_inv: torch.Tensor
     _columnwise_scale_inv: torch.Tensor
     _per_tensor_rowwise_scale_inv: torch.Tensor
+    _per_tensor_columnwise_scale_inv: torch.Tensor
 
     def __new__(
         cls,
-        *args,
         rowwise_data: Optional[torch.Tensor],
         rowwise_scale_inv: torch.Tensor,
         columnwise_data: Optional[torch.Tensor],
         columnwise_scale_inv: torch.Tensor,
         per_tensor_rowwise_scale_inv: torch.Tensor,
+        per_tensor_columnwise_scale_inv: torch.Tensor,
         quantizer: Optional[Quantizer] = None,
+        *args,
         **kwargs,
     ):
-        instance = super().__new__(cls, *args, **kwargs)
+
+        if cls is NVFP4TensorBase:
+            instance = object.__new__(cls)
+        else:
+            instance = super().__new__(cls, *args, **kwargs)
+
         instance._rowwise_data = rowwise_data
         instance._columnwise_data = columnwise_data
-        instance._quantizer = quantizer
+        instance._quantizer = quantizer.copy() if quantizer is not None else None
         instance._rowwise_scale_inv = rowwise_scale_inv
         instance._columnwise_scale_inv = columnwise_scale_inv
         instance._per_tensor_rowwise_scale_inv = per_tensor_rowwise_scale_inv
+        instance._per_tensor_columnwise_scale_inv = per_tensor_columnwise_scale_inv
 
         return instance
 
@@ -92,6 +102,7 @@ class NVFP4TensorBase(QuantizedTensorBase):
             self._rowwise_scale_inv,
             self._columnwise_scale_inv,
             self._per_tensor_rowwise_scale_inv,
+            self._per_tensor_columnwise_scale_inv,
         ):
             if t is not None:
                 t.data = _empty_tensor()
@@ -104,6 +115,7 @@ class NVFP4TensorBase(QuantizedTensorBase):
             "columnwise_data": self._columnwise_data,
             "columnwise_scale_inv": self._columnwise_scale_inv,
             "per_tensor_rowwise_scale_inv": self._per_tensor_rowwise_scale_inv,
+            "per_tensor_columnwise_scale_inv": self._per_tensor_columnwise_scale_inv,
             "quantizer": self._quantizer,
         }
 
@@ -115,12 +127,14 @@ class NVFP4TensorBase(QuantizedTensorBase):
             self._rowwise_scale_inv,
             self._columnwise_scale_inv,
             self._per_tensor_rowwise_scale_inv,
+            self._per_tensor_columnwise_scale_inv,
         ]
         self._rowwise_data = None
         self._columnwise_data = None
         self._rowwise_scale_inv = None
         self._columnwise_scale_inv = None
         self._per_tensor_rowwise_scale_inv = None
+        self._per_tensor_columnwise_scale_inv = None
         return tensors, self
 
     def restore_from_saved(
@@ -132,7 +146,8 @@ class NVFP4TensorBase(QuantizedTensorBase):
         self._rowwise_scale_inv = tensors[2]
         self._columnwise_scale_inv = tensors[3]
         self._per_tensor_rowwise_scale_inv = tensors[4]
-        return tensors[5:]
+        self._per_tensor_columnwise_scale_inv = tensors[5]
+        return tensors[6:]
 
     def get_data_tensors(self):
         """Get this Tensor's data."""
@@ -156,6 +171,7 @@ class NVFP4TensorBase(QuantizedTensorBase):
             f"rowwise_scaled_data={data_rowwise},"
             f"rowwise_scale_inv={self._rowwise_scale_inv},"
             f"per_tensor_rowwise_scale_inv={self._per_tensor_rowwise_scale_inv},"
+            f"per_tensor_columnwise_scale_inv={self._per_tensor_columnwise_scale_inv},"
             ")"
         )
 
@@ -193,6 +209,7 @@ class NVFP4TensorBase(QuantizedTensorBase):
         else:
             self._rowwise_data = None
             self._rowwise_scale_inv = None
+            self._per_tensor_rowwise_scale_inv = None
 
         # Update column-scaled data
         if columnwise_usage:
@@ -205,6 +222,12 @@ class NVFP4TensorBase(QuantizedTensorBase):
                     "Requested column-wise usage, "
                     "but NVFP4Tensor is missing column-scaled scale-inverses"
                 )
+            if self._per_tensor_columnwise_scale_inv is None:
+                raise RuntimeError(
+                    "Requested column-wise usage, "
+                    "but NVFP4Tensor is missing per tensor column-scaled scale-inverse"
+                )
         else:
             self._columnwise_data = None
             self._columnwise_scale_inv = None
+            self._per_tensor_columnwise_scale_inv = None

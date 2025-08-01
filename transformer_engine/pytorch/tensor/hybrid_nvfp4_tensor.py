@@ -35,6 +35,7 @@ class HybridNVFP4Quantizer(Quantizer):
         rowwise: bool = True,
         columnwise: bool = True,
     ) -> None:
+
         super().__init__(rowwise=rowwise, columnwise=columnwise)
         self.dtype = fp8_dtype
 
@@ -138,8 +139,7 @@ class HybridNVFP4Quantizer(Quantizer):
         )
 
     def calibrate(self, tensor: torch.Tensor) -> None:
-        # TODO(ksivamani): No calibration?
-        pass
+        return
 
     def _get_compatible_recipe(self) -> Union[type[Recipe], None]:
         return HybridNVFP4BlockScaling

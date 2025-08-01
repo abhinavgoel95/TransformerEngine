@@ -66,6 +66,8 @@ enum NVTETensorParam {
   kNVTEAmax = 3,               /*!< Amax tensor */
   kNVTERowwiseScaleInv = 4,    /*!< Scale inverse tensor for decoding Rowwise Data */
   kNVTEColumnwiseScaleInv = 5, /*!< Scale inverse tensor for decoding Columnwise Data */
+  kNVTESecondaryScaleInv = 6,  /*!< Scale inverse tensor for decoding Secondary Data */
+  kNVTESecondaryColumnwiseScaleInv = 7, /*!< Scale inverse tensor for decoding Secondary Columnwise Data */
   kNVTENumTensorParams
 };
 
@@ -569,6 +571,16 @@ class TensorWrapper {
     return set_parameter(kNVTEColumnwiseScaleInv, dptr, type, shape);
   }
 
+  template <typename ShapeType>
+  TensorWrapper &set_secondary_scale_inv(void *dptr, DType type, const ShapeType &shape) noexcept {
+    return set_parameter(kNVTESecondaryScaleInv, dptr, type, shape);
+  }
+
+  template <typename ShapeType>
+  TensorWrapper &set_secondary_columnwise_scale_inv(void *dptr, DType type, const ShapeType &shape) noexcept {
+    return set_parameter(kNVTESecondaryColumnwiseScaleInv, dptr, type, shape);
+  }
+
   // Parameter getters
 
   NVTEBasicTensor get_parameter(const NVTETensorParam param) const noexcept {
@@ -591,6 +603,14 @@ class TensorWrapper {
 
   NVTEBasicTensor get_columnwise_scale_inv() const noexcept {
     return get_parameter(kNVTEColumnwiseScaleInv);
+  }
+
+  NVTEBasicTensor get_secondary_scale_inv() const noexcept {
+    return get_parameter(kNVTESecondaryScaleInv);
+  }
+
+  NVTEBasicTensor get_secondary_columnwise_scale_inv() const noexcept {
+    return get_parameter(kNVTESecondaryColumnwiseScaleInv);
   }
 
   /*! \brief Get an underlying NVTETensor.

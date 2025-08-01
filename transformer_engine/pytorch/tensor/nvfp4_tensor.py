@@ -23,14 +23,32 @@ aten = torch.ops.aten
 
 class NVFP4Quantizer(Quantizer):
     """Builder class for NVFP4 tensors with NV block scaling"""
+    dtype: TE_DType
+    """Workspace buffer for max-abs value"""
+    amax: torch.Tensor
+    """amax reduction options"""
+    with_amax_reduction: bool
+    amax_reduction_group: Optional[dist_group_type]
+    # Whether to produce tensors that will be used in all-gather
+    all_gather_usage: bool
 
     def __init__(
         self,
+        fp4_dtype: TE_DType,
+        device: torch.device,
         *,
         rowwise: bool = True,
         columnwise: bool = True,
+        with_amax_reduction: bool = False,
+        amax_reduction_group: Optional[dist_group_type] = None,
+        all_gather_usage: bool = False,
     ) -> None:
         super().__init__(rowwise=rowwise, columnwise=columnwise)
+        self.dtype = fp4_dtype
+        self.amax = torch.empty(1, dtype=torch.float32, device=device)
+        self.with_amax_reduction = with_amax_reduction
+        self.amax_reduction_group = amax_reduction_group
+        self.all_gather_usage = all_gather_usage
 
     def update_quantized(
         self,
@@ -63,6 +81,70 @@ class NVFP4Quantizer(Quantizer):
             return False
         return True
 
+    def get_scale_shape(self, shape: Iterable[int], columnwise: bool) -> Tuple[int, int]:
+        """Calculate the shape of the scaling tensor for NVFP4 1D blockwise quantization.
+
+        This method determines the shape of the scaling tensor needed for blockwise quantization,
+        taking into account the input tensor shape and whether columnwise scaling is used.
+
+        Parameters
+        ----------
+        shape : Iterable[int]
+            Shape of the input tensor to be quantized
+        columnwise : bool
+            Whether to use columnwise scaling (True) or rowwise scaling (False)
+
+        Returns
+        -------
+        Tuple[int, int]
+            Shape of the scaling tensor as (outer_dim, inner_dim)
+            For NVFP4 1D blockwise quantization, blocksize is 16
+            - If columnwise: (round_to_multiple(K, 128), round_to_multiple(roundup(M / 16), 4))
+            - If rowwise: (round_to_multiple(M, 128), round_to_multiple(roundup(K / 16), 4))
+        Swizzle kernel will be performed before GEMM to suit the need of CuBLAS.
+        CuBLAS doc: https://docs.nvidia.com/cuda/cublas/index.html#d-block-scaling-factors-layout
+        """
+        M, K = 1, 1
+        M = math.prod(shape[:-1])
+        K = shape[-1]
+
+        if columnwise:
+            outer = round_up_to_nearest_multiple(K, 128)
+            inner = round_up_to_nearest_multiple(math.ceil(M / NVFP4_BLOCK_SCALING_SIZE), 4)
+            return (outer, inner)
+        else:
+            # rowwise
+            outer = round_up_to_nearest_multiple(M, 128)
+            inner = round_up_to_nearest_multiple(math.ceil(K / NVFP4_BLOCK_SCALING_SIZE), 4)
+            return (outer, inner)
+
+
+    def get_columnwise_shape(self, shape: Iterable[int]) -> Tuple[int, ...]:
+        """Calculate the shape of a tensor after columnwise quantization.
+
+        For NVFP4 columnwise quantization, it's performing 16x1 quantization block scaling.
+
+        Parameters
+        ----------
+        shape : Iterable[int]
+            Original shape of the tensor
+
+        Returns
+        -------
+        Tuple[int, ...]
+            New shape with dimensions rearranged for columnwise layout.
+            For a shape (d1, d2, ..., dn), returns (dn, d1, d2, ..., dn-1).
+            Returns empty tuple for empty input shape.
+        """
+        if len(shape) == 0:
+            return tuple()
+        # despite all_gather_usage, columnwise quantization will still be transposed
+        # and then after AG, a reorganize kernel will be called to restore the shape
+        colwise_shape = [shape[-1]]
+        for i in range(len(shape) - 1):
+            colwise_shape.append(shape[i])
+        return tuple(colwise_shape)
+
     def make_empty(
         self,
         shape: Iterable[int],
@@ -87,30 +169,29 @@ class NVFP4Quantizer(Quantizer):
         )
 
         # Allocate FP4 data
-        data = torch.empty(shape, dtype=torch.uint4, device=device)
-
-        # Allocate block scale inverse. E4M3 format.
-        scale_inv = torch.zeros(
-            round_up_to_nearest_multiple(math.prod(shape[:-1]), 128),
-            round_up_to_nearest_multiple(shape[-1] // NVFP4_BLOCK_SCALING_SIZE, 4),
-            dtype=torch.uint4,
-            device=device,
-        )
-
-        # Allocate per tensor scale inverse. FP32 format.
-        per_tensor_scale_inv = torch.ones(1, dtype=torch.float32, device=device)
+        data = None
+        scale_inv = None
+        per_tensor_rowwise_scale_inv = None
+        if self.rowwise_usage:
+            # use uint4 to for data, uint8 for scale_inv
+            data = torch.empty(shape, dtype=torch.uint4, device=device)
+            scale_shape = self.get_scale_shape(shape, columnwise=False)
+            scale_inv = torch.empty(scale_shape, dtype=torch.uint8, device=device)
+            # Allocate per tensor scale inverse. FP32 format.
+            per_tensor_rowwise_scale_inv = torch.ones(1, dtype=torch.float32, device=device)
 
         # Allocate FP8 data transpose if needed
         columnwise_data = None
         columnwise_scale_inv = None
+        per_tensor_columnwise_scale_inv = None
         if self.columnwise_usage:
-            columnwise_data = torch.empty_like(data)
-            columnwise_scale_inv = torch.zeros(
-                round_up_to_nearest_multiple(math.prod(shape[:-1]) // NVFP4_BLOCK_SCALING_SIZE, 4),
-                round_up_to_nearest_multiple(shape[-1], 128),
-                dtype=torch.uint4,
-                device=device,
+            # use uint4 to for data, uint8 for scale_inv
+            columnwise_data = torch.empty(
+                self.get_columnwise_shape(shape), dtype=torch.uint4, device=device
             )
+            columnwise_scale_shape = self.get_scale_shape(shape, columnwise=True)
+            columnwise_scale_inv = torch.empty(columnwise_scale_shape, dtype=torch.uint8, device=device)
+            per_tensor_columnwise_scale_inv = torch.ones(1, dtype=torch.float32, device=device)
 
         # Construct FP8 tensor
         return NVFP4Tensor(
@@ -120,14 +201,14 @@ class NVFP4Quantizer(Quantizer):
             rowwise_scale_inv=scale_inv,
             columnwise_data=columnwise_data,
             columnwise_scale_inv=columnwise_scale_inv,
-            per_tensor_rowwise_scale_inv=per_tensor_scale_inv,
+            per_tensor_rowwise_scale_inv=per_tensor_rowwise_scale_inv,
+            per_tensor_columnwise_scale_inv=per_tensor_columnwise_scale_inv,
             quantizer=self,
             requires_grad=requires_grad,
         )
 
     def calibrate(self, tensor: torch.Tensor) -> None:
-        # TODO(ksivamani): No calibration?
-        pass
+        return
 
     def _get_compatible_recipe(self) -> Union[type[Recipe], None]:
         return NVFP4BlockScaling
@@ -143,16 +224,25 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
 
     Parameters
     ----------
-    data: torch.Tensor
-          Raw FP8 data in a uint4 tensor
-    fp8_scale_inv: torch.Tensor
-                   Reciprocal of the scaling factor applied when
-                   casting to FP8, i.e. the scaling factor that must
-                   be applied when casting from FP8 to higher
-                   precision.
-    dtype: torch.dtype, default = torch.float32
-           Nominal tensor datatype.
+    TODO(nvfp4): Add docstring
     """
+
+    # NOTE: We reorder the *args so that we can instantiate a NVFP4TensorBase with positional args,
+    # which significantly reduces the Pybind11 overhead when calling the constructor from C++.
+    def __new__(
+        cls,
+        *args,
+        rowwise_data: Optional[torch.Tensor],
+        rowwise_scale_inv: Optional[torch.Tensor],
+        columnwise_data: Optional[torch.Tensor],
+        columnwise_scale_inv: Optional[torch.Tensor],
+        per_tensor_rowwise_scale_inv: Optional[torch.Tensor],
+        per_tensor_columnwise_scale_inv: Optional[torch.Tensor],
+        fp4_dtype: TE_DType,
+        quantizer: Quantizer,
+        **kwargs,
+    ):
+        
 
     def __repr__(self, *, tensor_contents=None):
         return f"NVFP4Tensor, data={self.dequantize(dtype=self.dtype)})"
@@ -272,6 +362,7 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
                 columnwise_data=tensor._columnwise_data,
                 columnwise_scale_inv=tensor._columnwise_scale_inv,
                 per_tensor_rowwise_scale_inv=tensor._per_tensor_rowwise_scale_inv,
+                per_tensor_columnwise_scale_inv=tensor._per_tensor_columnwise_scale_inv,
                 quantizer=tensor._quantizer,
                 requires_grad=False,
             )
@@ -282,13 +373,16 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
     @classmethod
     def _make_in_reduce_ex(
         cls,
+        shape: torch.Size,
         rowwise_data: torch.Tensor,
         rowwise_scale_inv: torch.Tensor,
         columnwise_data: torch.Tensor,
         columnwise_scale_inv: torch.Tensor,
         per_tensor_rowwise_scale_inv: torch.Tensor,
+        per_tensor_columnwise_scale_inv: torch.Tensor,
+        fp4_dtype: TE_DType,
         dtype: torch.dtype,
-        shape: torch.shape,
+        quantizer: Quantizer,
     ) -> NVFP4Tensor:
         """Build NVFP4Tensor, for use in __reduce__
 
@@ -297,13 +391,17 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
 
         """
         return NVFP4Tensor(
+            shape=shape,
+            dtype=dtype,
+            fp4_dtype=fp4_dtype,
             rowwise_data=rowwise_data,
             rowwise_scale_inv=rowwise_scale_inv,
             columnwise_data=columnwise_data,
             columnwise_scale_inv=columnwise_scale_inv,
             per_tensor_rowwise_scale_inv=per_tensor_rowwise_scale_inv,
-            dtype=dtype,
-            shape=shape,
+            per_tensor_columnwise_scale_inv=per_tensor_columnwise_scale_inv,
+            quantizer=quantizer,
+            requires_grad=False,
         )
 
     def __reduce_ex__(self, protocol: int) -> tuple:
@@ -311,13 +409,16 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
         return (
             NVFP4Tensor._make_in_reduce_ex,
             (
+                self.shape,
                 self._rowwise_data,
                 self._rowwise_scale_inv,
                 self._columnwise_data,
                 self._columnwise_scale_inv,
                 self._per_tensor_rowwise_scale_inv,
+                self._per_tensor_columnwise_scale_inv,
+                self._fp4_dtype,
                 self.dtype,
-                self.shape,
+                self._quantizer,
             ),
         )
 
@@ -333,6 +434,8 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
         casts to FP8.
 
         """
+
+        # TODO(zhongbo): how do we test this function?
 
         # Tensor device
         new_device = tensor.device if tensor.is_cuda else self.device
@@ -367,11 +470,12 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
             self._rowwise_scale_inv = tensor._rowwise_scale_inv
             self._columnwise_scale_inv = tensor._columnwise_scale_inv
             self._per_tensor_rowwise_scale_inv = tensor._per_tensor_rowwise_scale_inv
+            self._per_tensor_columnwise_scale_inv = tensor._per_tensor_columnwise_scale_inv
             return
 
-        # Quantize to FP8
+        # Quantize to FP4
         assert self._quantizer is not None, "Can't quantize without a quantizer"
-        self.data = self._quantizer.quantize(tensor)
+        quantizer.update_quantized(tensor, self)
         if self.requires_grad != tensor.requires_grad:
             self.requires_grad_(requires_grad=tensor.requires_grad)
 
@@ -426,14 +530,17 @@ class _ViewFunc(torch.autograd.Function):
             columnwise_shape = [shape[-1]] + list(shape[:-1])
             new_columnwise_data = tensor._columnwise_data.view(columnwise_shape)
         return NVFP4Tensor(
-            shape,
-            tensor.dtype,
+            shape=shape,
+            dtype=tensor.dtype,
+            fp4_dtype=tensor._fp4_dtype,
             rowwise_data=new_rowwise_data,
             rowwise_scale_inv=tensor._rowwise_scale_inv,
             columnwise_data=new_columnwise_data,
             columnwise_scale_inv=tensor._columnwise_scale_inv,
             per_tensor_rowwise_scale_inv=tensor._per_tensor_rowwise_scale_inv,
+            per_tensor_columnwise_scale_inv=tensor._per_tensor_columnwise_scale_inv,
             quantizer=tensor._quantizer,
+            requires_grad=tensor.requires_grad,
         )
 
     @staticmethod
@@ -452,14 +559,17 @@ class _ViewFunc(torch.autograd.Function):
             else:
                 new_columnwise_data = None
             dgrad = NVFP4Tensor(
-                ctx.shape,
-                grad.dtype,
+                shape=ctx.shape,
+                dtype=grad.dtype,
+                fp4_dtype=grad._fp4_dtype,
                 rowwise_data=new_data,
                 rowwise_scale_inv=grad._rowwise_scale_inv,
                 columnwise_data=new_columnwise_data,
                 columnwise_scale_inv=grad._columnwise_scale_inv,
                 per_tensor_rowwise_scale_inv=grad._per_tensor_rowwise_scale_inv,
+                per_tensor_columnwise_scale_inv=grad._per_tensor_columnwise_scale_inv,
                 quantizer=grad._quantizer,
+                requires_grad=grad.requires_grad,
             )
             return dgrad, None
         return grad.view(ctx.shape), None
@@ -513,14 +623,17 @@ class _ReshapeFunc(torch.autograd.Function):
             new_columnwise_data = tensor._columnwise_data.view(columnwise_shape)
 
         return NVFP4Tensor(
-            shape,
-            tensor.dtype,
+            shape=shape,
+            dtype=tensor.dtype,
+            fp4_dtype=tensor._fp4_dtype,
             rowwise_data=new_rowwise_data,
             rowwise_scale_inv=tensor._rowwise_scale_inv,
             columnwise_data=new_columnwise_data,
             columnwise_scale_inv=tensor._columnwise_scale_inv,
             per_tensor_rowwise_scale_inv=tensor._per_tensor_rowwise_scale_inv,
+            per_tensor_columnwise_scale_inv=tensor._per_tensor_columnwise_scale_inv,
             quantizer=tensor._quantizer,
+            requires_grad=tensor.requires_grad,
         )
 
     @staticmethod
@@ -539,14 +652,17 @@ class _ReshapeFunc(torch.autograd.Function):
                 columnwise_shape = [ctx.shape[-1]] + list(ctx.shape[:-1])
                 new_columnwise_data = grad._columnwise_data.view(columnwise_shape)
             dgrad = NVFP4Tensor(
-                ctx.shape,
-                grad.dtype,
+                shape=ctx.shape,
+                dtype=grad.dtype,
+                fp4_dtype=grad._fp4_dtype,
                 rowwise_data=new_rowwise_data,
                 rowwise_scale_inv=grad._rowwise_scale_inv,
                 columnwise_data=new_columnwise_data,
                 columnwise_scale_inv=grad._columnwise_scale_inv,
                 per_tensor_rowwise_scale_inv=grad._per_tensor_rowwise_scale_inv,
+                per_tensor_columnwise_scale_inv=grad._per_tensor_columnwise_scale_inv,
                 quantizer=grad._quantizer,
+                requires_grad=grad.requires_grad,
             )
             return dgrad, None
         return grad.view(ctx.shape), None
