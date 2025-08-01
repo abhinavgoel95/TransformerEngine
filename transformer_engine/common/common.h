@@ -48,10 +48,16 @@ inline bool is_delayed_tensor_scaling(const NVTEScalingMode &mode) {
   return mode == NVTE_DELAYED_TENSOR_SCALING;
 }
 
-inline bool is_mxfp_scaling(const NVTEScalingMode &mode) { return mode == NVTE_MXFP8_1D_SCALING; }
+inline bool is_nvfp4_scaling(const NVTEScalingMode &mode) { return mode == NVTE_NVFP4_1D_SCALING; }
+
+inline bool is_mxfp8_scaling(const NVTEScalingMode &mode) { return mode == NVTE_MXFP8_1D_SCALING; }
+
+inline bool is_mxfp_scaling(const NVTEScalingMode &mode) {
+  return (mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING) || (mode == NVTE_MXFP8_1D_SCALING);
+}
 
 inline bool is_nvfp_scaling(const NVTEScalingMode &mode) {
-  return mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING;
+  return (mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING) || (mode == NVTE_NVFP4_1D_SCALING);
 }
 
 inline bool is_hybrid_nvfp4_scaling(const NVTEScalingMode &mode) {
@@ -182,6 +188,7 @@ struct Tensor {
      * https://gcc.gnu.org/bugzilla/show_bug.cgi?id=109569).
      */
     switch (scaling_mode) {
+      case NVTE_NVFP4_1D_SCALING:
       case NVTE_DELAYED_TENSOR_SCALING:
         if (!has_data() && has_columnwise_data()) {
           std::vector<size_t> ret;

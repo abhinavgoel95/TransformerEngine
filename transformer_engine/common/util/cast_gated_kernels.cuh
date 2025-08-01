@@ -1256,7 +1256,7 @@ void quantize_gated(const Tensor &grad, const Tensor &gated_input, Tensor *outpu
         cast_gated<ParamOP, ActOP>(gated_input, output, stream);
       }
     }
-  } else if (is_mxfp_scaling(output->scaling_mode)) {
+  } else if (is_mxfp8_scaling(output->scaling_mode)) {
     if (use_tma_kernels) {
       cast_mxfp8_gated<IS_DGATED, ParamOP, ActOP, DActOP>(grad, gated_input, output, stream);
     } else {

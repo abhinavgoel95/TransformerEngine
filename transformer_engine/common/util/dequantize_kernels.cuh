@@ -340,7 +340,7 @@ void dequantize_helper(const Tensor &input, Tensor *output, cudaStream_t stream)
 
   if (is_tensor_scaling(input.scaling_mode)) {
     dequantization::fp8_dequantize(input, output, stream);
-  } else if (is_mxfp_scaling(input.scaling_mode)) {
+  } else if (is_mxfp8_scaling(input.scaling_mode)) {
     if (is_supported_by_CC_100()) {
       dequantization::mxfp8_dequantize(input, output, stream);
     } else {
