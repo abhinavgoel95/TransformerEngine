@@ -64,6 +64,7 @@ from ..tensor.float8_tensor import (
     Float8Tensor,
 )
 from ..tensor.mxfp8_tensor import MXFP8Quantizer
+from ..tensor.nvfp4_tensor import NVFP4Quantizer
 from ..tensor.hybrid_nvfp4_tensor import HybridNVFP4Quantizer
 from ..tensor.float8_blockwise_tensor import Float8BlockQuantizer
 from ._common import apply_normalization, WeightGradStore
@@ -240,7 +241,8 @@ class _LayerNormMLP(torch.autograd.Function):
                 raise ValueError("Missing quantizer for FC1 input tensor")
             fc1_input_quantizer.set_usage(rowwise=True, columnwise=backwards_needs_fc1_input)
             if sequence_parallel and isinstance(
-                fc1_input_quantizer, (Float8Quantizer, Float8CurrentScalingQuantizer)
+                fc1_input_quantizer,
+                (Float8Quantizer, Float8CurrentScalingQuantizer, NVFP4Quantizer),
             ):
                 # All-gather is not supported with FP8 column-wise data
                 fc1_input_quantizer.set_usage(columnwise=False)
@@ -991,7 +993,10 @@ class _LayerNormMLP(torch.autograd.Function):
 
                 if ctx.fp8:
                     # TODO float8 blockwise current scaling has no bgrad fusion for now
-                    if isinstance(ctx.fc1_grad_output_quantizer, Float8BlockQuantizer):
+                    # TODO(ksivaman): Re-add fusion once kernel is available.
+                    if isinstance(
+                        ctx.fc1_grad_output_quantizer, (Float8BlockQuantizer, NVFP4Quantizer)
+                    ):
                         fc1_bias_grad = dact.view(-1, dact.shape[-1]).sum(dim=0)
                         dact = ctx.fc1_grad_output_quantizer(dact)
                     else:
