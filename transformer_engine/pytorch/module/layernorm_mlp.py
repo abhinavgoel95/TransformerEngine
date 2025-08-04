@@ -99,7 +99,7 @@ def _get_act_func_supported_list(recipe: Optional[Recipe] = None):
             "qgeglu": (tex.qgeglu, tex.dqgeglu, None),
             "srelu": (tex.srelu, tex.dsrelu, None),
         }
-    if recipe.delayed() or recipe.mxfp8() or recipe.nvfp4():
+    if recipe.delayed() or recipe.mxfp8() or recipe.hybrid_nvfp4():
         # Delayed scaling, fusion supported list: [tex.dbias_dgelu, tex.dbias_drelu, tex.dbias_dqgelu, tex.dbias_dsrelu]
         # MXFP8: [tex.dbias_dgelu, tex.dbias_drelu, tex.dbias_dqgelu, tex.dbias_dsrelu]
         return {
@@ -114,7 +114,8 @@ def _get_act_func_supported_list(recipe: Optional[Recipe] = None):
         }
     # no activation fusion written yet
     # Per-tensor current scaling or fp8 blockwise scaling: []
-    if recipe.float8_current_scaling() or recipe.float8_block_scaling():
+    # TODO(ksivaman): Fuse nvfp4 act once kernel is available.
+    if recipe.float8_current_scaling() or recipe.float8_block_scaling() or recipe.nvfp4():
         return {
             "gelu": (tex.gelu, tex.dgelu, None),
             "relu": (tex.relu, tex.drelu, None),
@@ -538,6 +539,7 @@ class _LayerNormMLP(torch.autograd.Function):
             if not fc2_weight.requires_grad:
                 clear_tensor_data(act_out)
                 act_out = None
+
             tensors_to_save, tensor_objects = prepare_for_saving(
                 inputmat,
                 ln_weight,
@@ -663,6 +665,7 @@ class _LayerNormMLP(torch.autograd.Function):
                 mu,
                 rsigma,
             ) = restore_from_saved(ctx.tensor_objects, saved_tensors)
+
             # Delete the references to tensor objects once they've been consumed
             # by the `restore_from_saved` method to construct back the actual tensors.
             ctx.tensor_objects = None
@@ -752,7 +755,9 @@ class _LayerNormMLP(torch.autograd.Function):
                 quantizer = None
                 if ctx.fp8 or ctx.debug:
                     quantizer = ctx.fc1_input_quantizer
-                    if isinstance(quantizer, (Float8Quantizer, Float8CurrentScalingQuantizer)):
+                    if isinstance(
+                        quantizer, (Float8Quantizer, Float8CurrentScalingQuantizer, NVFP4Quantizer)
+                    ):
                         # If data is in FP8, we compute FP8 transposes manually
                         quantizer.set_usage(rowwise=True, columnwise=False)
                     else:
@@ -1895,7 +1900,7 @@ class LayerNormMLP(TransformerEngineBaseModule):
                 rowwise=True,
                 columnwise=isinstance(
                     fc2_input_quantizer,
-                    (MXFP8Quantizer, Float8BlockQuantizer, HybridNVFP4Quantizer),
+                    (MXFP8Quantizer, Float8BlockQuantizer, HybridNVFP4Quantizer, NVFP4Quantizer),
                 ),
             )
             fc1_input_quantizer.internal = True
