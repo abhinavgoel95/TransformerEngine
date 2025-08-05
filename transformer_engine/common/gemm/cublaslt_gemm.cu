@@ -145,7 +145,7 @@ GemmParam CanonicalizeGemmInput(const transformer_engine::Tensor &A, const cubla
     ret.transA = CUBLAS_OP_T;  // NVFP4 gemm is only supported in TN layout.
     ret.Atype = is_A_transposed ? A.data.dtype : A.columnwise_data.dtype;
     ret.A_scale_inv = is_A_transposed ? A.scale_inv.dptr : A.columnwise_scale_inv.dptr;
-    ret.lda = is_A_transposed ? k : m;
+    ret.lda = k;
   } else if (mxfp8) {
     // MXFP8 GEMM. Either for pure MXFP8 recipe or backward of Hybrid NVFP4 recipe.
     // Note: Row-wise and column-wise data are scaled along different
@@ -218,7 +218,7 @@ GemmParam CanonicalizeGemmInput(const transformer_engine::Tensor &A, const cubla
     ret.transB = CUBLAS_OP_N;  // NVFP4 gemm is only supported in TN layout.
     ret.Btype = is_B_transposed ? B.columnwise_data.dtype : B.data.dtype;
     ret.B_scale_inv = is_B_transposed ? B.columnwise_scale_inv.dptr : B.scale_inv.dptr;
-    ret.ldb = is_B_transposed ? n : k;
+    ret.ldb = k;
   } else if (mxfp8) {
     if (is_B_transposed) {
       NVTE_CHECK(B.has_columnwise_data(), "Input B is missing column-wise usage");

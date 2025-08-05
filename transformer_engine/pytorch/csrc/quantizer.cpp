@@ -1549,10 +1549,24 @@ void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
   // Allocate tensor for high precision tranpose output.
   const auto nvte_shape = input.shape();
   const auto nvte_transpose_shape = out.get_columnwise_data().shape;
+  NVTE_CHECK(nvte_transpose_shape.ndim >= 2, "Insufficient number of dimensions for transpose.");
+
   std::vector<int64_t> transpose_shape_int64;
-  for (size_t i = 0; i < nvte_transpose_shape.ndim; ++i) {
-    transpose_shape_int64.push_back(nvte_transpose_shape.data[i]);
+  int64_t last_dim = nvte_shape.data[nvte_shape.ndim - 1];
+  int64_t flat_first_dim = 1;
+  transpose_shape_int64.push_back(last_dim);
+  for (size_t i = 0; i < nvte_shape.ndim - 1; ++i) {
+    flat_first_dim *= nvte_shape.data[i];
   }
+  transpose_shape_int64.push_back(flat_first_dim);
+
+  // Make a 2D input wrapper for transpose kernel.
+  NVTEShape nvte_shape_2d;
+  nvte_shape_2d.ndim = 2;
+  nvte_shape_2d.data[0] = flat_first_dim;
+  nvte_shape_2d.data[1] = last_dim;
+  TensorWrapper input_2d(input.dptr(), nvte_shape_2d, input.dtype());
+
   const auto opts = at::TensorOptions().dtype(GetATenDType(input.dtype())).device(torch::kCUDA);
   at::Tensor input_transpose_torch = at::empty(transpose_shape_int64, opts);
   auto input_transpose = makeTransformerEngineTensor(input_transpose_torch);
@@ -1575,7 +1589,7 @@ void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
                                              out.get_columnwise_scale_inv().shape);
 
   NVTE_SCOPED_GIL_RELEASE({
-    nvte_transpose(input.data(), input_transpose.data(), at::cuda::getCurrentCUDAStream());
+    nvte_transpose(input_2d.data(), input_transpose.data(), at::cuda::getCurrentCUDAStream());
     nvte_quantize_v2(input.data(), rowwise_quantized.data(), quant_config,
                      at::cuda::getCurrentCUDAStream());
     nvte_quantize_v2(input_transpose.data(), columnwise_quantized.data(), quant_config,

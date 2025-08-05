@@ -66,8 +66,8 @@ class Recipe:
     """
 
     def nvfp4(self):
-        """Whether the given recipe has any element of NVFP4 strategy."""
-        return isinstance(self, (HybridNVFP4BlockScaling, NVFP4BlockScaling))
+        """Whether the given recipe has NVFP4 scaling strategy."""
+        return isinstance(self, NVFP4BlockScaling)
 
     def hybrid_nvfp4(self):
         """Whether the given recipe has NVFP4 forward and MXFP8 backward strategy."""

@@ -91,7 +91,7 @@ fp8_recipes = []
 if mxfp8_available:
     fp8_recipes.append(recipe.MXFP8BlockScaling())
     fp8_recipes.append(recipe.HybridNVFP4BlockScaling())  # TODO: fix check for this
-    #fp8_recipes.append(recipe.NVFP4BlockScaling())  # TODO: fix check for this
+    fp8_recipes.append(recipe.NVFP4BlockScaling())  # TODO: fix check for this
 if fp8_block_scaling_available:
     fp8_recipes.append(recipe.Float8BlockScaling())
 if fp8_available:
