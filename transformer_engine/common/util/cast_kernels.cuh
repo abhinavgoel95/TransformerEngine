@@ -2075,9 +2075,17 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
       break;
     }
     case NVTE_NVFP4_1D_SCALING: {
-      NVTE_CHECK(!(output_tensor->has_columnwise_data()),
-                 "Columnwise scaled output not supported.");
-      nvfp4_quantize<IS_ACT, ParamOP, OP>(*input_tensor, &noop_tensor, output_tensor, stream);
+      // NVTE_CHECK(!(output_tensor->has_columnwise_data()),
+      //            "Columnwise scaled output not supported.");
+      // nvfp4_quantize<IS_ACT, ParamOP, OP>(*input_tensor, &noop_tensor, output_tensor, stream);
+      // break;
+      NVTE_CHECK((!IS_DBIAS && !IS_DACT && !IS_ACT),
+                 "IS_DBIAS, IS_DACT, and IS_ACT not implemented for NVTE_BLOCK_SCALING_2D");
+      quantize_transpose_vector_blockwise_fp4(
+          input_tensor->data, output_tensor->amax, output_tensor->scale_inv,
+          output_tensor->columnwise_scale_inv, output_tensor->data, output_tensor->columnwise_data,
+          0.0f, output_tensor->has_data(), output_tensor->has_columnwise_data(), false, false,
+          stream);
       break;
     }
     case NVTE_HYBRID_NVFP4_MXFP8_SCALING: {

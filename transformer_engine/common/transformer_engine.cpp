@@ -11,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <mutex>
+#include <utility>
 
 #include "common.h"
 #include "common/util/cuda_runtime.h"
@@ -125,6 +126,10 @@ void CheckScaleTensorShape(const Tensor &t, const std::string &name) {
             alignment;
         alignment = block_alignment[0];
         expected_y = DIVUP(DIVUP(t.flat_last_dim(), static_cast<size_t>(1)), alignment) * alignment;
+
+        if (t.scaling_mode == NVTE_NVFP4_1D_SCALING) {
+          std::swap(expected_x, expected_y);
+        }
         const auto &expected = std::vector<size_t>{expected_x, expected_y};
         NVTE_CHECK(t.columnwise_scale_inv.shape == expected, "Tensor \"", name,
                    "\"  has invalid columnwise_scale_inv shape (expected ", expected, ", got ",
@@ -196,6 +201,29 @@ void CheckOutputTensor(const Tensor &t, const std::string &name, bool allow_empt
                  "FP8 scaling factor output ", name,
                  "_columnwise_scale_inverse has invalid dtype "
                  "(expected Float32 or Float8E8M0, got ",
+                 to_string(t.columnwise_scale_inv.dtype), ")");
+    }
+  } else if (is_fp4_dtype(type)) {
+    // TODO(zhongbo): add more checks for NVFP4 1D scaling
+    // FP4 output needs to have scale, scale_inv and amax
+    if (t.scaling_mode == NVTE_NVFP4_1D_SCALING && t.amax.dptr != nullptr) {
+      NVTE_CHECK(t.amax.dtype == DType::kFloat32, "Invalid amax dtype (expected ",
+                 to_string(DType::kFloat32), ", got ", to_string(t.amax.dtype), ")");
+      NVTE_CHECK(product(t.amax.shape) == 1, "Invalid shape of amax in output ", name,
+                 " (expected 1 entry, got shape=", t.amax.shape, ")");
+    }
+    if (t.has_data()) {
+      NVTE_CHECK(t.scale_inv.dptr != nullptr, "FP4 scaling factor output ", name,
+                 "_scale_inverse must be allocated");
+      NVTE_CHECK(t.scale_inv.dtype == DType::kFloat8E4M3, "FP4 scaling factor output ", name,
+                 "_scale_inverse has invalid dtype (expected Float8E4M3, got ",
+                 to_string(t.scale_inv.dtype), ")");
+    }
+    if (t.has_columnwise_data()) {
+      NVTE_CHECK(t.columnwise_scale_inv.dptr != nullptr, "FP4 scaling factor output ", name,
+                 "_columnwise_scale_inverse must be allocated");
+      NVTE_CHECK(t.columnwise_scale_inv.dtype == DType::kFloat8E4M3, "FP4 scaling factor output ",
+                 name, "_columnwise_scale_inverse has invalid dtype (expected Float8E4M3, got ",
                  to_string(t.columnwise_scale_inv.dtype), ")");
     }
   } else {
@@ -494,6 +522,9 @@ void nvte_set_tensor_param(NVTETensor *tensor, NVTETensorParam param_name,
     case kNVTEColumnwiseScaleInv:
       t->columnwise_scale_inv = *param;
       break;
+    case kNVTEColumnwiseAmax:
+      t->columnwise_amax = *param;
+      break;
     default:
       NVTE_ERROR("Unknown tensor parameter!");
   }
@@ -517,6 +548,8 @@ NVTEBasicTensor nvte_get_tensor_param(const NVTETensor tensor, NVTETensorParam p
       return t.scale_inv;
     case kNVTEColumnwiseScaleInv:
       return t.columnwise_scale_inv;
+    case kNVTEColumnwiseAmax:
+      return t.columnwise_amax;
     default:
       NVTE_ERROR("Unknown tensor parameter!");
   }

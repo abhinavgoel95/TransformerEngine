@@ -66,6 +66,7 @@ enum NVTETensorParam {
   kNVTEAmax = 3,               /*!< Amax tensor */
   kNVTERowwiseScaleInv = 4,    /*!< Scale inverse tensor for decoding Rowwise Data */
   kNVTEColumnwiseScaleInv = 5, /*!< Scale inverse tensor for decoding Columnwise Data */
+  kNVTEColumnwiseAmax = 6,     /*!< Columnwise Amax tensor */
   kNVTENumTensorParams
 };
 
@@ -569,6 +570,11 @@ class TensorWrapper {
     return set_parameter(kNVTEColumnwiseScaleInv, dptr, type, shape);
   }
 
+  template <typename ShapeType>
+  TensorWrapper &set_columnwise_amax(void *dptr, DType type, const ShapeType &shape) noexcept {
+    return set_parameter(kNVTEColumnwiseAmax, dptr, type, shape);
+  }
+
   // Parameter getters
 
   NVTEBasicTensor get_parameter(const NVTETensorParam param) const noexcept {
@@ -591,6 +597,10 @@ class TensorWrapper {
 
   NVTEBasicTensor get_columnwise_scale_inv() const noexcept {
     return get_parameter(kNVTEColumnwiseScaleInv);
+  }
+
+  NVTEBasicTensor get_columnwise_amax() const noexcept {
+    return get_parameter(kNVTEColumnwiseAmax);
   }
 
   /*! \brief Get an underlying NVTETensor.

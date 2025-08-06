@@ -122,8 +122,10 @@ void nvte_compute_amax(const NVTETensor input_, const NVTETensor output_, cudaSt
   // Check output tensor
   NVTE_CHECK(output_ != nullptr, "Invalid output tensor (got NULL)");
   auto &output = *convertNVTETensorCheck(output_);
-  NVTE_CHECK(output.scaling_mode == NVTE_DELAYED_TENSOR_SCALING,
-             "Output tensor for amax computation must be FP8 tensor with per-tensor scaling, "
+  NVTE_CHECK(output.scaling_mode == NVTE_DELAYED_TENSOR_SCALING ||
+                 output.scaling_mode == NVTE_NVFP4_1D_SCALING,
+             "Output tensor for amax computation must be FP8 tensor with per-tensor scaling or "
+             "NVFP4 1D scaling, "
              "but got scaling_mode=",
              to_string(output.scaling_mode));
   NVTE_CHECK(output.amax.numel() == 1,

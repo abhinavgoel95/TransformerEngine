@@ -68,6 +68,7 @@ list(APPEND transformer_engine_SOURCES
      transpose/quantize_transpose_square_blockwise.cu
      transpose/quantize_transpose_vector_blockwise.cu
      transpose/swap_first_dims.cu
+     transpose/quantize_transpose_vector_blockwise_fp4.cu
      activation/gelu.cu
      fused_attn/flash_attn.cu
      fused_attn/context_parallel.cu
@@ -106,6 +107,7 @@ list(APPEND transformer_engine_SOURCES
      recipe/current_scaling.cu
      recipe/delayed_scaling.cu
      recipe/fp8_block_scaling.cu
+     recipe/nvfp4.cu
      comm_gemm_overlap/userbuffers/ipcsocket.cc
      comm_gemm_overlap/userbuffers/userbuffers-host.cpp
      comm_gemm_overlap/userbuffers/userbuffers.cu

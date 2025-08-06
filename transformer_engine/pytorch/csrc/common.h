@@ -300,6 +300,15 @@ class HybridNVFP4Quantizer : public Quantizer {
 
 class NVFP4Quantizer : public Quantizer {
  public:
+  // fp4 dtype
+  DType dtype;
+  // amax reduction for low precision FP4 AG
+  bool with_amax_reduction;
+  c10::intrusive_ptr<dist_group_type> amax_reduction_group;
+  // random hadamard transform
+  bool with_rht;
+  bool with_post_rht_amax;
+
   explicit NVFP4Quantizer(const py::handle& quantizer);
 
   NVTEScalingMode get_scaling_mode() const override { return NVTE_NVFP4_1D_SCALING; }

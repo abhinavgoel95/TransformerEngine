@@ -22,6 +22,35 @@
 
 namespace {
 
+/* Use CUDA const memory to store scalar 1 and 0 for cublas usage
+*/
+__device__ __constant__ float one_device;
+__device__ __constant__ float zero_device;
+
+inline float *GetScalarOne() {
+  static std::once_flag init_flag;
+  std::call_once(init_flag, []() {
+    float one = 1.0f;
+    NVTE_CHECK_CUDA(cudaMemcpyToSymbol(one_device, &one, sizeof(float)));
+  });
+  // return address by cudaGetSymbolAddress
+  float *dev_ptr;
+  NVTE_CHECK_CUDA(cudaGetSymbolAddress((void **)&dev_ptr, one_device));
+  return dev_ptr;
+}
+
+inline float *GetScalarZero() {
+  static std::once_flag init_flag;
+  std::call_once(init_flag, []() {
+    float zero = 0.0f;
+    NVTE_CHECK_CUDA(cudaMemcpyToSymbol(zero_device, &zero, sizeof(float)));
+  });
+  // return address by cudaGetSymbolAddress
+  float *dev_ptr;
+  NVTE_CHECK_CUDA(cudaGetSymbolAddress((void **)&dev_ptr, zero_device));
+  return dev_ptr;
+}
+
 cudaDataType_t get_cuda_dtype(const transformer_engine::DType t) {
   using namespace transformer_engine;
   switch (t) {
@@ -351,6 +380,10 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
   float zero = 0.0;
   float beta = (accumulate) ? one : zero;
 
+  // default case is that alpha_ptr and beta_ptr are both host pointers
+  void *alpha_ptr = static_cast<void *>(&one);
+  void *beta_ptr = static_cast<void *>(&beta);
+
   cublasLtHandle_t handle = cublasHandleManager::Instance().GetHandle();
 
   cublasLtMatmulDesc_t operationDesc = nullptr;
@@ -441,6 +474,23 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
             sizeof(dummy_a_vec_stride)));
       }
     } else if (use_fp4) {  // NVFP4 GEMM
+      // make sure alpha beta computation dtype remains fp32 by CUBLASLT_MATMUL_DESC_SCALE_TYPE
+      cublasDataType_t scale_type = CUDA_R_32F;
+      NVTE_CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(
+          operationDesc, CUBLASLT_MATMUL_DESC_SCALE_TYPE, &scale_type, sizeof(scale_type)));
+
+      // Set pointer mode: alpha and beta are both device pointers
+      // https://docs.nvidia.com/cuda/cublas/#cublasltpointermode-t
+      cublasLtPointerMode_t pointer_mode = CUBLASLT_POINTER_MODE_DEVICE;
+      NVTE_CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(
+          operationDesc, CUBLASLT_MATMUL_DESC_POINTER_MODE, &pointer_mode, sizeof(pointer_mode)));
+
+      // TODO(zhongbo): find a smart way to pass in alpha as a global tensor scale
+      // TN case: alpha = A.secondary_rowwise_scale_inv * B.secondary_rowwise_scale_inv
+      // NVFP4 has scalar secondary scale inv
+      alpha_ptr = GetScalarOne();
+      beta_ptr = accumulate ? GetScalarOne() : GetScalarZero();
+
       fp8e4m3 *A_scale_inverse = reinterpret_cast<fp8e4m3 *>(param.A_scale_inv);
       fp8e4m3 *B_scale_inverse = reinterpret_cast<fp8e4m3 *>(param.B_scale_inv);
       NVTE_CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(operationDesc,
@@ -648,16 +698,15 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
   if (returnedResults == 0) NVTE_ERROR("Unable to find any suitable algorithms");
 
   // D = alpha * (A * B) + beta * C
-  NVTE_CHECK_CUBLAS(cublasLtMatmul(handle, operationDesc,
-                                   static_cast<const void *>(&one),         /* alpha */
-                                   param.A,                                 /* A */
-                                   Adesc, param.B,                          /* B */
-                                   Bdesc, static_cast<const void *>(&beta), /* beta */
-                                   C,                                       /* C */
-                                   Cdesc, D,                                /* D */
-                                   Ddesc, &heuristicResult.algo,            /* algo */
-                                   workspace,                               /* workspace */
-                                   workspaceSize, stream));                 /* stream */
+  NVTE_CHECK_CUBLAS(cublasLtMatmul(handle, operationDesc, alpha_ptr, /* alpha */
+                                   param.A,                          /* A */
+                                   Adesc, param.B,                   /* B */
+                                   Bdesc, beta_ptr,                  /* beta */
+                                   C,                                /* C */
+                                   Cdesc, D,                         /* D */
+                                   Ddesc, &heuristicResult.algo,     /* algo */
+                                   workspace,                        /* workspace */
+                                   workspaceSize, stream));          /* stream */
 
   // Update FP8 scale-inv in output tensor
   // Note: This is a WAR for the case when we have fp8 output but D->scale_inv is not allocated.

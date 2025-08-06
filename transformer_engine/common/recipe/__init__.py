@@ -22,9 +22,12 @@ class _FormatHelper(NamedTuple):
 class Format(Enum):
     """
     Supported FP8 formats.
+    Supported FP4 formats.
 
     Values
     ------
+    E2M1 :
+          All FP4 tensors are in e2m1 format
     E4M3 :
           All FP8 tensors are in e4m3 format
     E5M2 :
@@ -34,6 +37,7 @@ class Format(Enum):
             FP8 tensors in the backward pass are in e5m2 format
     """
 
+    E2M1 = _FormatHelper(max_fwd=6, max_bwd=6)
     E4M3 = _FormatHelper(max_fwd=448, max_bwd=448)
     E5M2 = _FormatHelper(max_fwd=57344, max_bwd=57344)
     HYBRID = _FormatHelper(max_fwd=E4M3.max_fwd, max_bwd=E5M2.max_bwd)
@@ -44,6 +48,8 @@ class MMParams:
     """for pytorch as an example, _scaled_mm use_fast_accum = (not use_split_accumulator)
     apply split accumulator or not, turning it on will increase accuracy but impact gemm performance,
     so only turn it on for certain gemms
+
+    Note that split_accumulator is not relevant for NVFP4 scaling.
     """
 
     use_split_accumulator: bool = True
@@ -54,10 +60,16 @@ class QParams:
     """Quantization parameters.
     power_2_scale: use power of 2 scale parameter
     amax_epsilon: optional minimum value of abs max
+    double_quantization: whether to use double quantization
+    fp4_random_hadamard_transform: whether to use random hadamard transform
+    fp4_stochastic_rounding: whether to use stocastic rounding
     """
 
     power_2_scale: bool = False
     amax_epsilon: float = 0.0
+    double_quantization: bool = False
+    fp4_random_hadamard_transform: bool = False
+    fp4_stochastic_rounding: bool = False
 
 
 class Recipe:
@@ -66,7 +78,7 @@ class Recipe:
     """
 
     def nvfp4(self):
-        """Whether the given recipe has NVFP4 scaling strategy."""
+        """Whether the given recipe is NVFP4 1D block scaling."""
         return isinstance(self, NVFP4BlockScaling)
 
     def hybrid_nvfp4(self):
@@ -387,14 +399,16 @@ class HybridNVFP4BlockScaling(Recipe):
                 pass.
     """
 
+    fp4_format: Format = Format.E2M1
     fp8_format: Format = Format.E4M3
     fp8_dpa: bool = False
     fp8_mha: bool = False
 
     def __post_init__(self) -> None:
-        assert (
-            self.fp8_format != Format.HYBRID
-        ), "Hybrid training requires forward and backward pass in FP8."
+        # TODO(nvfp4 hybrid): This hybrid nvfp4 recipe is not fully supported, will raise error to ban it for now
+        raise NotImplementedError(
+            "Hybrid NVFP4 recipe is not fully supported, will raise error to ban it for now"
+        )
 
     def __repr__(self) -> str:
         return f"recipe_type={self.__class__.__name__}, format={str(self.fp8_format).split('.')[1]}"
@@ -421,19 +435,49 @@ class NVFP4BlockScaling(Recipe):
 
     Parameters
     ----------
-    fp8_format : {Format.E4M3, Format.E5M2}, default = Format.E4M3
-                Controls the FP8 data format used during the backward
-                pass.
+    fp4_format : {Format.E2M1}, default = Format.E2M1
+                Controls the NVFP4 data format
+    fp8_format : {Format.E4M3}, only E4M3 for NVFP4 scaling
+                factors, this is a place holder entry to indicate FP8 dtype
+    fp8_dpa: bool, default = `False`
+             Disable FP8 attention for now
+    fp8_mha: bool, default = `False`
+             Disable FP8 attention for now
     """
 
+    fp4_format: Format = Format.E2M1
     fp8_format: Format = Format.E4M3
+    fp8_quant_fwd_inp = QParams(
+        double_quantization=False,
+        fp4_random_hadamard_transform=False,
+        fp4_stochastic_rounding=False,
+    )
+    fp8_quant_fwd_weight = QParams(
+        double_quantization=False,
+        fp4_random_hadamard_transform=False,
+        fp4_stochastic_rounding=False,
+    )
+    fp8_quant_bwd_grad = QParams(
+        double_quantization=False,
+        fp4_random_hadamard_transform=False,
+        fp4_stochastic_rounding=False,
+    )
+    # split_accumulator is not relevant for NVFP4 scaling
+    fp8_gemm_fprop: MMParams = MMParams(use_split_accumulator=False)
+    fp8_gemm_dgrad: MMParams = MMParams(use_split_accumulator=False)
+    fp8_gemm_wgrad: MMParams = MMParams(use_split_accumulator=False)
     fp8_dpa: bool = False
     fp8_mha: bool = False
 
     def __post_init__(self) -> None:
-        assert (
-            self.fp8_format != Format.HYBRID
-        ), "Hybrid training requires forward and backward pass in FP8."
+        assert self.fp4_format == Format.E2M1, "Only E2M1 is supported for NVFP4 scaling"
+        assert self.fp8_format == Format.E4M3, "Only E4M3 is supported for NVFP4 scaling"
 
     def __repr__(self) -> str:
-        return f"recipe_type={self.__class__.__name__}, format={str(self.fp8_format).split('.')[1]}"
+        return (
+            f"recipe_type={self.__class__.__name__}, "
+            f"fp4_format={str(self.fp4_format).split('.')[1]}, "
+            f"fp8_format={str(self.fp8_format).split('.')[1]}, "
+            f"fp8_dpa={self.fp8_dpa}, "
+            f"fp8_mha={self.fp8_mha}"
+        )

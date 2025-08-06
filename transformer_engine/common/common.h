@@ -122,6 +122,7 @@ struct Tensor {
   SimpleTensor data;
   SimpleTensor columnwise_data;
   SimpleTensor amax;
+  SimpleTensor columnwise_amax;
   SimpleTensor scale;
   SimpleTensor scale_inv;
   SimpleTensor columnwise_scale_inv;
@@ -133,6 +134,7 @@ struct Tensor {
       : data(),
         columnwise_data(),
         amax(nullptr, {1}, DType::kFloat32),
+        columnwise_amax(nullptr, {1}, DType::kFloat32),
         scale(nullptr, {1}, DType::kFloat32),
         scale_inv(nullptr, {1}, DType::kFloat32),
         columnwise_scale_inv(nullptr, {1}, DType::kFloat32),
@@ -143,6 +145,7 @@ struct Tensor {
     data.clear();
     columnwise_data.clear();
     amax.clear();
+    columnwise_amax.clear();
     scale.clear();
     scale_inv.clear();
     columnwise_scale_inv.clear();
@@ -189,6 +192,25 @@ struct Tensor {
      */
     switch (scaling_mode) {
       case NVTE_NVFP4_1D_SCALING:
+        // This function returns the shape of the tensor dimensions
+        // as opposed to the shape of the tensor storage container.
+        // For NVFP4, 2 elements share a byte.
+        if (!has_data() && has_columnwise_data()) {
+          std::vector<size_t> ret;
+          if (!columnwise_data.shape.empty()) {
+            for (size_t i = 1; i < columnwise_data.shape.size() - 1; i++) {
+              ret.push_back(columnwise_data.shape[i]);
+            }
+            ret.push_back(columnwise_data.shape[columnwise_data.shape.size() - 1] * 2);
+            ret.push_back(columnwise_data.shape.front());
+          }
+          return ret;
+        } else {
+          auto data_shape_nvfp4 = data.shape;
+          data_shape_nvfp4.back() *= 2;
+          return data_shape_nvfp4;
+        }
+        break;
       case NVTE_DELAYED_TENSOR_SCALING:
         if (!has_data() && has_columnwise_data()) {
           std::vector<size_t> ret;
@@ -559,6 +581,18 @@ struct TypeInfo {
     } break;                                                         \
     default:                                                         \
       NVTE_ERROR("Invalid type.");                                   \
+  }
+
+// Add a pack_size argument to select the packed type for FP4
+#define TRANSFORMER_ENGINE_TYPE_SWITCH_FP4x2_ONLY(dtype, pack_size, type, ...) \
+  switch (dtype) {                                                             \
+    using namespace transformer_engine;                                        \
+    case DType::kFloat4E2M1: {                                                 \
+      using type = __nv_fp4x2_storage_t;                                       \
+      { __VA_ARGS__ }                                                          \
+    } break;                                                                   \
+    default:                                                                   \
+      NVTE_ERROR("Invalid type.");                                             \
   }
 
 #define TRANSFORMER_ENGINE_TYPE_SWITCH_FP8ONLY(dtype, type, ...) \
