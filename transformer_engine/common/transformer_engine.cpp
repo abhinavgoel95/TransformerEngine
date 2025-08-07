@@ -114,6 +114,7 @@ void CheckScaleTensorShape(const Tensor &t, const std::string &name) {
         expected_y =
             DIVUP(DIVUP(t.flat_last_dim(), static_cast<size_t>(block_size_rowwise)), alignment) *
             alignment;
+
         const auto &expected = std::vector<size_t>{expected_x, expected_y};
         NVTE_CHECK(t.scale_inv.shape == expected, "Tensor \"", name,
                    "\" has invalid scale_inv shape (expected ", expected, ", got ",
@@ -160,6 +161,26 @@ void CheckInputTensor(const Tensor &t, const std::string &name) {
                  "FP8 scaling factor input ", name,
                  "_columnwise_scale_inverse has invalid dtype "
                  "(expected Float32 or Byte, got ",
+                 to_string(t.columnwise_scale_inv.dtype), ")");
+    }
+  } else if (is_fp4_dtype(type)) {
+    // TODO(ksivaman): Fix this to check for amaxes and other details.
+    // For now only needed for swizzle.
+    if (t.has_data()) {
+      NVTE_CHECK(t.scale_inv.dptr != nullptr, "FP4 scaling factor input ", name,
+                 "_scale_inverse must be allocated");
+      NVTE_CHECK(t.scale_inv.dtype == DType::kFloat8E4M3, "FP4 scaling factor input ", name,
+                 "_scale_inverse has invalid dtype "
+                 "(expected DType::kFloat8E4M3, got ",
+                 to_string(t.scale_inv.dtype), ")");
+    }
+    if (t.has_columnwise_data()) {
+      NVTE_CHECK(t.columnwise_scale_inv.dptr != nullptr, "FP4 scaling factor input ", name,
+                 "_columnwise_scale_inverse must be allocated");
+      NVTE_CHECK(t.columnwise_scale_inv.dtype == DType::kFloat8E4M3, "FP8 scaling factor input ",
+                 name,
+                 "_columnwise_scale_inverse has invalid dtype "
+                 "(expected DType::kFloat8E4M3, got ",
                  to_string(t.columnwise_scale_inv.dtype), ")");
     }
   } else {
