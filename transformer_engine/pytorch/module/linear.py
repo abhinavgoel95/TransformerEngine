@@ -671,6 +671,7 @@ class _Linear(torch.autograd.Function):
 
                 # dgrad GEMM
                 # Note: dx = dy * w
+
                 nvtx_range_push(f"{nvtx_label}.dgrad_gemm")
                 gemm_out, *_, reduce_scatter_out = general_gemm(
                     weight_fp8,

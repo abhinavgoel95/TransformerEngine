@@ -434,50 +434,6 @@ void quantize_transpose_vector_blockwise_fp4(const SimpleTensor& input,
   const size_t num_blocks_x = RoundUpDivide(row_length, (size_t)kTileDim);
   const size_t num_blocks_y = RoundUpDivide(num_rows, (size_t)kTileDim);
 
-  // print out all the info
-  /*
-  std::cout << "num_blocks_x: " << num_blocks_x << std::endl;
-  std::cout << "num_blocks_y: " << num_blocks_y << std::endl;
-  std::cout << "row_length: " << row_length << std::endl;
-  std::cout << "num_rows: " << num_rows << std::endl;
-  std::cout << "kTileDim: " << kTileDim << std::endl;
-  std::cout << "kSMemSize: " << kSMemSize << std::endl;
-  std::cout << "kThreadsPerBlock: " << kThreadsPerBlock << std::endl;
-  // input args
-  auto print_shape = [](const std::vector<size_t>& shape) {
-    std::cout << "[";
-    for (size_t i = 0; i < shape.size(); ++i) {
-      std::cout << shape[i];
-      if (i != shape.size() - 1) std::cout << ", ";
-    }
-    std::cout << "]";
-  };
-
-  std::cout << "input.shape: ";
-  print_shape(input.shape);
-  std::cout << std::endl;
-  std::cout << "global_amax.shape: ";
-  print_shape(global_amax.shape);
-  std::cout << std::endl;
-  std::cout << "scale_inv.shape: ";
-  print_shape(scale_inv.shape);
-  std::cout << std::endl;
-  std::cout << "scale_inv_t.shape: ";
-  print_shape(scale_inv_t.shape);
-  std::cout << std::endl;
-  std::cout << "output.shape: ";
-  print_shape(output.shape);
-  std::cout << std::endl;
-  std::cout << "output_t.shape: ";
-  print_shape(output_t.shape);
-  std::cout << std::endl;
-  std::cout << "epsilon: " << epsilon << std::endl;
-  std::cout << "return_identity: " << return_identity << std::endl;
-  std::cout << "return_transpose: " << return_transpose << std::endl;
-  std::cout << "pow2_scale: " << pow2_scale << std::endl;
-  std::cout << "swizzled_scale: " << swizzled_scale << std::endl;
-  */
-
   TRANSFORMER_ENGINE_TYPE_SWITCH_INPUT(
       input.dtype, InputType,
 
