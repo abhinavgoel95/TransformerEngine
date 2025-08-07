@@ -170,7 +170,7 @@ Error_Type GemmFFI(cudaStream_t stream, Buffer_Type lhs, Buffer_Type lhs_scale_i
   // Launch TE/common kernel with swapped LHS/RHS for cuBLAS column-major order
   auto num_math_sm = cuda::sm_count() - getenv<int>("NVTE_EXT_MARGIN_SM", 0);
   nvte_cublas_gemm(rhs_.data(), lhs_.data(), out_.data(), bias_.data(), pre_gelu_.data(),
-                   rhs_transposed, lhs_transposed, grad, workspace_.data(), false,
+                   rhs_transposed, lhs_transposed, grad, workspace_.data(), nullptr, false,
                    use_split_accumulator, num_math_sm, stream);
 
   return ffi_with_cuda_error_check();
@@ -567,7 +567,7 @@ Error_Type GroupedGemmFFI(cudaStream_t stream, Buffer_Type lhs_data, Buffer_Type
 
   nvte_multi_stream_cublas_gemm(rhs_list.data(), lhs_list.data(), out_list.data(), bias_list.data(),
                                 pre_gelu_list.data(), num_non_empty_gemms, rhs_is_trans,
-                                lhs_is_trans, grad, workspace_list.data(), accumulate,
+                                lhs_is_trans, grad, workspace_list.data(), nullptr, accumulate,
                                 use_split_accumulator, num_math_sm, stream);
 
   return ffi_with_cuda_error_check();

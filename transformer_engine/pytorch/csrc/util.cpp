@@ -12,6 +12,14 @@ std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrap
                                                   bool rowwise) {
   using namespace transformer_engine::pytorch;
 
+  auto scaling_mode = input.scaling_mode();
+  bool is_nvfp4 = scaling_mode == NVTE_NVFP4_1D_SCALING;
+
+  auto data_te_dtype =
+      is_nvfp4 ? transformer_engine::DType::kFloat4E2M1 : transformer_engine::DType::kFloat8E4M3;
+  auto scale_inv_te_dtype =
+      is_nvfp4 ? transformer_engine::DType::kFloat8E4M3 : transformer_engine::DType::kFloat8E8M0;
+
   if (input.scaling_mode() == NVTE_INVALID_SCALING) {
     NVTE_ERROR("Invalid scaling mode for swizzle.");
   } else if (input.scaling_mode() != NVTE_MXFP8_1D_SCALING &&

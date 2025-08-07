@@ -34,6 +34,7 @@ extern "C" {
  *  \param[in]     grad                  Whether this operation is part of the
  *                                       gradient computation.
  *  \param[out]    workspace             Workspace tensor.
+ *  \param[in]     alpha                 Scaling factor for the output, can be used for nvfp4 gemm
  *  \param[in]     accumulate            Whether to accumulate the result into the D matrix.
  *  \param[in]     use_split_accumulator Whether to use split accumulator in the FP8 GEMM.
  *  \param[in]     math_sm_count         Number of GPU SMs to use (default=0: use cuBLAS heuristics)
@@ -41,8 +42,8 @@ extern "C" {
  */
 void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, const NVTETensor bias,
                       NVTETensor pre_gelu_out, bool transa, bool transb, bool grad,
-                      NVTETensor workspace, bool accumulate, bool use_split_accumulator,
-                      int math_sm_count, cudaStream_t stream);
+                      NVTETensor workspace, NVTETensor alpha, bool accumulate,
+                      bool use_split_accumulator, int math_sm_count, cudaStream_t stream);
 
 /*! \brief Compute matrix multiplication of 2 matrices with chunking and atomic counters.
  *
@@ -63,6 +64,7 @@ void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, cons
  *  \param[in]     grad                  Whether this operation is part of the
  *                                       gradient computation.
  *  \param[out]    workspace             Workspace tensor.
+ *  \param[in]     alpha                 Scaling factor for the output, can be used for nvfp4 gemm
  *  \param[in]     accumulate            Whether to accumulate the result into the D matrix.
  *  \param[in]     use_split_accumulator Whether to use split accumulator in the FP8 GEMM.
  *  \param[in]     math_sm_count         Number of GPU SMs to use (default=0: use cuBLAS heuristics)
@@ -74,9 +76,9 @@ void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, cons
  */
 void nvte_cublas_atomic_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D,
                              const NVTETensor bias, NVTETensor pre_gelu_out, bool transa,
-                             bool transb, bool grad, NVTETensor workspace, bool accumulate,
-                             bool use_split_accumulator, int math_sm_count, int m_split,
-                             int n_split, bool gemm_producer, const NVTETensor counter,
+                             bool transb, bool grad, NVTETensor workspace, NVTETensor alpha,
+                             bool accumulate, bool use_split_accumulator, int math_sm_count,
+                             int m_split, int n_split, bool gemm_producer, const NVTETensor counter,
                              cudaStream_t stream);
 
 /*! \brief Compute multiple pairs of matrix multiplication, potentially fused with other operations,
@@ -98,6 +100,7 @@ void nvte_cublas_atomic_gemm(const NVTETensor A, const NVTETensor B, NVTETensor 
  *  \param[in]     grad                  Whether this operation is part of the
  *                                       gradient computation.
  *  \param[out]    workspace             List of workspace tensors.
+ *  \param[in]     alpha                 Scaling factor for the output, can be used for nvfp4 gemm
  *  \param[in]     accumulate            Whether to accumulate the result into the D matrix.
  *  \param[in]     use_split_accumulator Whether to use split accumulator in the FP8 GEMM.
  *  \param[in]     math_sm_count         Number of GPU SMs to use (default=0: use cuBLAS heuristics)
@@ -106,7 +109,7 @@ void nvte_cublas_atomic_gemm(const NVTETensor A, const NVTETensor B, NVTETensor 
 void nvte_multi_stream_cublas_gemm(const NVTETensor* A, const NVTETensor* B, NVTETensor* D,
                                    const NVTETensor* bias, NVTETensor* pre_gelu_out,
                                    const int num_gemms, bool transa, bool transb, bool grad,
-                                   NVTETensor* workspace, bool accumulate,
+                                   NVTETensor* workspace, NVTETensor* alpha, bool accumulate,
                                    bool use_split_accumulator, int math_sm_count,
                                    cudaStream_t stream);
 #ifdef __cplusplus

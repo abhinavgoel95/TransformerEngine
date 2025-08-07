@@ -126,6 +126,21 @@ std::vector<py::object> gemm(py::handle A, bool transa, py::handle B, bool trans
     }
   }
 
+  // alpha tensor for nvfp4 gemm
+  // TODO(hybrid nvfp4): also enable alpha for fwd gemm
+  bool using_nvfp4 = A_tensor.scaling_mode() == NVTE_NVFP4_1D_SCALING &&
+                     B_tensor.scaling_mode() == NVTE_NVFP4_1D_SCALING;
+  NVTETensor alpha_tensor = nullptr;
+  // declare torch tensor for alpha
+  at::Tensor alpha_tensor_torch;
+  TensorWrapper alpha_tensor_wrapper;
+  if (using_nvfp4) {
+    alpha_tensor_torch =
+        at::empty({1}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA));
+    alpha_tensor_wrapper = makeTransformerEngineTensor(alpha_tensor_torch);
+    alpha_tensor = alpha_tensor_wrapper.data();
+  }
+
   // Bias tensor
   TensorWrapper bias_tensor;
   MaybeTensor bias_grad = std::nullopt;
@@ -240,7 +255,8 @@ std::vector<py::object> gemm(py::handle A, bool transa, py::handle B, bool trans
       NVTE_SCOPED_GIL_RELEASE({
         nvte_cublas_gemm(A_tensor.data(), B_tensor.data(), D_tensor.data(), bias_tensor.data(),
                          te_pre_gelu_out.data(), transa, transb, grad, te_workspace.data(),
-                         accumulate, use_split_accumulator, num_math_sms, main_stream);
+                         alpha_tensor, accumulate, use_split_accumulator, num_math_sms,
+                         main_stream);
       });
     }
   } else {
@@ -313,8 +329,9 @@ void te_atomic_gemm(at::Tensor A, at::Tensor A_scale_inverse, DType A_type,
   NVTE_SCOPED_GIL_RELEASE({
     nvte_cublas_atomic_gemm(te_A.data(), te_B.data(), te_D.data(), te_bias.data(),
                             te_pre_gelu_out.data(), transa, transb, grad, te_workspace.data(),
-                            accumulate, use_split_accumulator, math_sm_count, m_split, n_split,
-                            gemm_producer, te_counter.data(), at::cuda::getCurrentCUDAStream());
+                            nullptr, accumulate, use_split_accumulator, math_sm_count, m_split,
+                            n_split, gemm_producer, te_counter.data(),
+                            at::cuda::getCurrentCUDAStream());
   });
 }
 
@@ -433,11 +450,11 @@ std::optional<std::vector<at::Tensor>> te_general_grouped_gemm(
   }
   // For now, we only have multi-stream cublas backend.
   NVTE_SCOPED_GIL_RELEASE({
-    nvte_multi_stream_cublas_gemm(te_A_vector.data(), te_B_vector.data(), te_D_vector.data(),
-                                  te_bias_vector.data(), te_pre_gelu_out_vector.data(),
-                                  te_A_vector.size(), transa, transb, grad,
-                                  te_workspace_vector.data(), accumulate, use_split_accumulator,
-                                  math_sm_count, at::cuda::getCurrentCUDAStream());
+    nvte_multi_stream_cublas_gemm(
+        te_A_vector.data(), te_B_vector.data(), te_D_vector.data(), te_bias_vector.data(),
+        te_pre_gelu_out_vector.data(), te_A_vector.size(), transa, transb, grad,
+        te_workspace_vector.data(), nullptr, accumulate, use_split_accumulator, math_sm_count,
+        at::cuda::getCurrentCUDAStream());
   });
   return bias;
 }

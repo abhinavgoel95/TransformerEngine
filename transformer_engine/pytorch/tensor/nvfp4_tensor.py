@@ -179,7 +179,7 @@ class NVFP4Quantizer(Quantizer):
         if self.rowwise_usage:
             data = torch.empty(self.convert_shape_for_fp4(shape), dtype=torch.uint8, device=device)
             scale_shape = self.get_scale_shape(shape, columnwise=False)
-            scale_inv = torch.empty(scale_shape, dtype=torch.uint8, device=device)
+            scale_inv = torch.zeros(scale_shape, dtype=torch.uint8, device=device)
             # Allocate per tensor scale inverse. FP32 format.
             amax_rowwise = torch.zeros(1, dtype=torch.float32, device=device)
 
@@ -194,7 +194,7 @@ class NVFP4Quantizer(Quantizer):
                 device=device,
             )
             columnwise_scale_shape = self.get_scale_shape(shape, columnwise=True)
-            columnwise_scale_inv = torch.empty(
+            columnwise_scale_inv = torch.zeros(
                 columnwise_scale_shape, dtype=torch.uint8, device=device
             )
             amax_columnwise = torch.zeros(1, dtype=torch.float32, device=device)

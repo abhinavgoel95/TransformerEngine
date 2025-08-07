@@ -28,19 +28,19 @@ __global__ void compute_nvfp4_per_tensor_scale_kernel(const float *amax_A, const
 }  // namespace nvfp4_recipe
 }  // namespace transformer_engine
 
-void nvte_nvfp4_compute_per_tensor_scale(const NVTETensor inpA, const bool inpA_is_columnwise,
-                                         const NVTETensor inpB, const bool inpB_is_columnwise,
-                                         NVTETensor out, cudaStream_t stream) {
+void nvte_nvfp4_compute_per_tensor_scale(const NVTETensor inpA, const bool use_rowwise_amax_A,
+                                         const NVTETensor inpB, const bool use_rowwise_amax_B,
+                                         NVTETensor alpha_out, cudaStream_t stream) {
   NVTE_API_CALL(nvte_nvfp4_compute_per_tensor_scale);
   using namespace transformer_engine;
 
   auto *tA = convertNVTETensor(inpA);
   auto *tB = convertNVTETensor(inpB);
-  auto *tOut = convertNVTETensor(out);
+  auto *tOut = convertNVTETensor(alpha_out);
 
-  void *amax_A_ptr = inpA_is_columnwise ? tA->columnwise_amax.dptr : tA->amax.dptr;
-  void *amax_B_ptr = inpB_is_columnwise ? tB->columnwise_amax.dptr : tB->amax.dptr;
-  void *alpha_ptr = tOut->scale.dptr;
+  void *amax_A_ptr = use_rowwise_amax_A ? tA->amax.dptr : tA->columnwise_amax.dptr;
+  void *amax_B_ptr = use_rowwise_amax_B ? tB->amax.dptr : tB->columnwise_amax.dptr;
+  void *alpha_ptr = tOut->data.dptr;
 
   // check for not null pointers
   NVTE_CHECK(amax_A_ptr != nullptr, "amax_A_ptr is null");
