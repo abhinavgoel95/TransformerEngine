@@ -1,0 +1,235 @@
+# Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# See LICENSE for license information.
+
+import os
+import pytest
+import torch
+import transformer_engine as te
+from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
+from transformer_engine.pytorch.distributed import fp8_autocast
+from transformer_engine.common import recipe
+
+
+recipe_available, reason_for_no_recipe = FP8GlobalStateManager.is_nvfp4_available()
+
+
+def setup_environment_for_reference():
+    os.environ["QAT_PARAMS"] = "6010"
+
+
+def cleanup_environment():
+    if "QAT_PARAMS" in os.environ:
+        del os.environ["QAT_PARAMS"]
+
+
+def reset_rng_states():
+    seed = 1234
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+
+
+def check_nvfp4_module_versus_reference(
+    module_class,
+    in_features: int,
+    out_features: int,
+    bias: bool,
+    x_dtype: torch.dtype,
+    num_steps: int = 1,
+):
+    """
+    Compare native NVFP4 module against reference implementation.
+
+    Args:
+        module_class: te.Linear or te.LayerNormLinear
+        in_features: Input feature dimension
+        out_features: Output feature dimension  
+        bias: Whether to use bias
+        x_dtype: Input tensor dtype
+        num_steps: Number of forward/backward steps to test
+    """
+    device = "cuda"
+    batch_size = 32
+    seq_len = 128
+
+    # Create both modules with identical initialization
+    cleanup_environment()
+    reset_rng_states()
+
+    # Create native module
+    print("\nCreate native module")
+    if module_class == te.pytorch.Linear:
+        native_module = te.pytorch.Linear(
+            in_features=in_features,
+            out_features=out_features,
+            bias=bias,
+            device=device,
+            params_dtype=x_dtype,
+        )
+    elif module_class == te.pytorch.LayerNormLinear:
+        native_module = te.pytorch.LayerNormLinear(
+            in_features=in_features,
+            out_features=out_features,
+            bias=bias,
+            device=device,
+            params_dtype=x_dtype,
+        )
+    else:
+        raise ValueError(f"Unsupported module class: {module_class}")
+
+    # Create reference module with same weights
+    setup_environment_for_reference()
+    reset_rng_states()
+
+    # Create reference module
+    print("Create reference module")
+    if module_class == te.pytorch.Linear:
+        ref_module = te.pytorch.Linear(
+            in_features=in_features,
+            out_features=out_features,
+            bias=bias,
+            device=device,
+            params_dtype=x_dtype,
+        )
+    elif module_class == te.pytorch.LayerNormLinear:
+        ref_module = te.pytorch.LayerNormLinear(
+            in_features=in_features,
+            out_features=out_features,
+            bias=bias,
+            device=device,
+            params_dtype=x_dtype,
+        )
+
+    # Sync weights between native and reference modules
+    with torch.no_grad():
+        # Copy main weight and bias parameters
+        if hasattr(native_module, 'weight') and hasattr(ref_module, 'weight'):
+            ref_module.weight.copy_(native_module.weight)
+        if bias and hasattr(native_module, 'bias') and hasattr(ref_module, 'bias'):
+            ref_module.bias.copy_(native_module.bias)
+
+        # Copy layer norm parameters if they exist
+        if hasattr(native_module, 'layer_norm_weight') and hasattr(ref_module, 'layer_norm_weight'):
+            ref_module.layer_norm_weight.copy_(native_module.layer_norm_weight)
+        if hasattr(native_module, 'layer_norm_bias') and hasattr(ref_module, 'layer_norm_bias'):
+            ref_module.layer_norm_bias.copy_(native_module.layer_norm_bias)
+
+    nvfp4_recipe = recipe.NVFP4BlockScaling()
+
+    # Training loop comparison
+    native_outputs = []
+    ref_outputs = []
+
+    for step in range(num_steps):
+        torch.manual_seed(1234 + step)
+        torch.cuda.manual_seed(1234 + step)
+
+        x_shape = (batch_size, seq_len, in_features)
+        x_native = torch.randn(x_shape, dtype=x_dtype, device=device, requires_grad=True)
+        x_ref = x_native.clone().detach().requires_grad_(True)
+
+        grad_output_shape = (batch_size, seq_len, out_features)
+        grad_output = torch.randn(grad_output_shape, dtype=x_dtype, device=device)
+
+        # Native forward/backward
+        cleanup_environment()
+        with fp8_autocast(enabled=True, fp8_recipe=nvfp4_recipe):
+            # enable weight cache by giving is_first_microbatch
+            y_native = native_module(x_native, is_first_microbatch=(step == 0))
+        y_native.backward(grad_output)
+
+        # Reference forward/backward
+        setup_environment_for_reference()
+        with fp8_autocast(enabled=True, fp8_recipe=nvfp4_recipe):  # Exact recipe does not play a role here
+            y_ref = ref_module(x_ref)
+        y_ref.backward(grad_output)
+
+        # Store results
+        native_outputs.append({
+            'output': y_native.detach().clone(),
+            'input_grad': x_native.grad.detach().clone() if x_native.grad is not None else None,
+            'weight_grad': native_module.weight.grad.detach().clone() if native_module.weight.grad is not None else None,
+            'bias_grad': native_module.bias.grad.detach().clone() if bias and native_module.bias.grad is not None else None,
+        })
+
+        ref_outputs.append({
+            'output': y_ref.detach().clone(),
+            'input_grad': x_ref.grad.detach().clone() if x_ref.grad is not None else None,
+            'weight_grad': ref_module.weight.grad.detach().clone() if ref_module.weight.grad is not None else None,
+            'bias_grad': ref_module.bias.grad.detach().clone() if bias and ref_module.bias.grad is not None else None,
+        })
+
+    # Compare results across all steps
+    for step in range(num_steps):
+        native_out = native_outputs[step]
+        ref_out = ref_outputs[step]
+        
+        # Compare outputs
+        torch.testing.assert_close(
+            native_out['output'], 
+            ref_out['output'], 
+            atol=1e-2, 
+            rtol=1e-2,
+            msg=f"Output mismatch at step {step}"
+        )
+
+        # Compare input gradients
+        torch.testing.assert_close(
+            native_out['input_grad'], 
+            ref_out['input_grad'], 
+            atol=1e-2, 
+            rtol=1e-2,
+            msg=f"Input gradient mismatch at step {step}"
+        )
+
+        # Compare weight gradients
+        torch.testing.assert_close(
+            native_out['weight_grad'], 
+            ref_out['weight_grad'], 
+            atol=1e-2, 
+            rtol=1e-2,
+            msg=f"Weight gradient mismatch at step {step}"
+        )
+
+        # Compare bias gradients
+        if bias and native_out['bias_grad'] is not None and ref_out['bias_grad'] is not None:
+            torch.testing.assert_close(
+                native_out['bias_grad'], 
+                ref_out['bias_grad'], 
+                atol=1e-2, 
+                rtol=1e-2,
+                msg=f"Bias gradient mismatch at step {step}"
+            )
+
+    # Clean up
+    cleanup_environment()
+
+
+@pytest.mark.skipif(not recipe_available, reason=reason_for_no_recipe)
+@pytest.mark.parametrize("in_features, out_features", [
+    (128, 256),
+    (256, 128),
+    (512, 512),
+    (768, 3072),
+    (1024, 4096),
+])
+# @pytest.mark.parametrize("bias", [True, False], ids=["with_bias", "no_bias"])
+@pytest.mark.parametrize("bias", [False], ids=["no_bias"])
+@pytest.mark.parametrize("x_dtype", [torch.float32, torch.bfloat16], ids=str)
+@pytest.mark.parametrize("num_steps", [1, 3], ids=["single_step", "multi_step"])
+def test_nvfp4_linear_versus_reference(
+    in_features: int,
+    out_features: int,
+    bias: bool,
+    x_dtype: torch.dtype,
+    num_steps: int,
+):
+    """Test NVFP4 Linear module against reference implementation."""
+    check_nvfp4_module_versus_reference(
+        module_class=te.pytorch.Linear,
+        in_features=in_features,
+        out_features=out_features,
+        bias=bias,
+        x_dtype=x_dtype,
+        num_steps=num_steps,
+    )
