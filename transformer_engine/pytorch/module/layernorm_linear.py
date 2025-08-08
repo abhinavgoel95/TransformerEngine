@@ -16,6 +16,7 @@ import transformer_engine_torch as tex
 
 from transformer_engine.common.recipe import Recipe
 from transformer_engine.pytorch import torch_version
+from transformer_engine.pytorch.tensor.utils import is_experimental
 from .base import (
     fill_userbuffers_buffer_for_all_gather,
     get_workspace,
@@ -53,7 +54,7 @@ from ..distributed import (
 from ..constants import GemmParallelModes, dist_group_type
 from ..jit import no_torch_dynamo
 from ..graph import is_graph_capturing
-from ._common import apply_normalization, noop_cat, WeightGradStore
+from ._common import apply_normalization, noop_cat, WeightGradStore, get_module_quantizers
 from ..tensor.quantized_tensor import (
     QuantizedTensor,
     QuantizedTensorBase,
@@ -192,6 +193,7 @@ class _LayerNormLinear(torch.autograd.Function):
             and not debug
             and not return_layernorm_output
             and not return_layernorm_output_gathered
+            and not is_experimental(input_quantizer)
         )
 
         # Apply normalization
@@ -1498,11 +1500,7 @@ class LayerNormLinear(TransformerEngineBaseModule):
             # Get concatenated weight and bias tensors
             weight_tensor, bias_tensor = self._get_weight_and_bias_tensors()
 
-            quantizers = (
-                self._get_quantizers(fp8_output, fp8_grad)
-                if not debug
-                else self._get_debug_quantizers(fp8_output, fp8_grad)
-            )
+            quantizers = get_module_quantizers(self, fp8_output, fp8_grad, debug)
             if debug:
                 if not any_feature_enabled(quantizers):
                     # If no feature is used, then run faster implementation with debug = False.
