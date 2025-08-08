@@ -410,8 +410,18 @@ void quantize_transpose_vector_blockwise_fp4(const SimpleTensor& input,
     return;
   }
 
-  const size_t row_length = input.shape[1];
-  const size_t num_rows = input.shape[0];
+  const size_t row_length = input.shape.size() > 0 ? input.shape.at(input.shape.size() - 1) : 1u;
+  size_t num_elements = row_length;
+  size_t num_rows = 1;
+  for (size_t i = 0; (i < input.shape.size() - 1) && (input.shape.size() > 0); ++i) {
+    num_rows *= input.shape.at(i);
+    num_elements *= input.shape.at(i);
+  }
+
+  // Early return if the input tensor is empty
+  if (num_elements == 0) {
+    return;
+  }
 
   size_t scale_stride_x = 0;
   size_t scale_stride_y = 0;
