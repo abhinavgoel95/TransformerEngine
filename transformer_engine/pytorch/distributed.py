@@ -40,7 +40,7 @@ from .fp8 import FP8GlobalStateManager, fp8_autocast
 from .tensor.float8_tensor import Float8Quantizer, Float8Tensor, Float8CurrentScalingQuantizer
 from .tensor.mxfp8_tensor import MXFP8Quantizer
 from .tensor.float8_blockwise_tensor import Float8BlockQuantizer
-from .tensor.quantized_tensor import QuantizedTensor, Quantizer
+from .tensor.quantized_tensor import QuantizedTensorBase, QuantizedTensor, Quantizer
 from .tensor._internal.float8_tensor_base import Float8TensorBase
 from .tensor._internal.mxfp8_tensor_base import MXFP8TensorBase
 from .tensor._internal.float8_blockwise_tensor_base import Float8BlockwiseQTensorBase
@@ -1339,7 +1339,7 @@ def gather_along_first_dim(
     # Return immediately if no communication is required
     world_size = get_distributed_world_size(process_group)
     if world_size == 1:
-        if quantizer is not None and not isinstance(inp, QuantizedTensor):
+        if quantizer is not None and not isinstance(inp, QuantizedTensorBase):
             inp = quantizer(inp)
         return inp, None
 
@@ -1414,7 +1414,7 @@ def gather_along_first_dim(
             "Attempting to all-gather an unsupported quantized tensor. "
             "Falling back to high-precision all-gather."
         )
-        if isinstance(inp, QuantizedTensor):
+        if isinstance(inp, QuantizedTensorBase):
             inp = inp.dequantize()
         # Falling back to high-precision all-gather for Float8BlockQuantizer
         # means that it should directly output GEMM_READY format
@@ -1430,7 +1430,7 @@ def gather_along_first_dim(
         return out, None
 
     # Dequantize quantized tensor if not supported
-    if isinstance(inp, QuantizedTensor):
+    if isinstance(inp, QuantizedTensorBase):
         warnings.warn(
             "Attempting to all-gather an unsupported quantized tensor. "
             "Falling back to high-precision all-gather."
