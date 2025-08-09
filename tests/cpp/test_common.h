@@ -209,8 +209,7 @@ class Tensor {
 
   template <typename T>
   T *columnwise_cpu_dptr() const {
-    if ((tensor_.scaling_mode() != NVTE_HYBRID_NVFP4_MXFP8_SCALING)
-        || (tensor_.scaling_mode() != NVTE_NVFP4_1D_SCALING)) {
+    if (tensor_.scaling_mode() != NVTE_HYBRID_NVFP4_MXFP8_SCALING) {
       NVTE_CHECK(TypeInfo<T>::dtype == tensor_.dtype(), "Invalid type!");
     }
     NVTE_CHECK(columnwise_, "Tensor does not have columnwise data!");
@@ -229,8 +228,7 @@ class Tensor {
   float scale() const {
     if(scale_cpu_data_) {
       NVTE_CHECK((tensor_.scaling_mode() == NVTE_DELAYED_TENSOR_SCALING)
-                 || (tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING)
-                 || (tensor_.scaling_mode() == NVTE_NVFP4_1D_SCALING),
+                 || (tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING),
                  "Invalid scaling_mode!");
       to_cpu();
       return *scale_cpu_data_;
@@ -247,8 +245,6 @@ class Tensor {
       NVTE_CHECK(TypeInfo<T>::dtype == DType::kFloat32, "Invalid type!");
     } else if (tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING) {
       // NVTE_CHECK(TypeInfo<T>::dtype == DType::kFloat8E4M3, "Invalid type!");
-    } else if (tensor_.scaling_mode() == NVTE_NVFP4_1D_SCALING) {
-      NVTE_CHECK(TypeInfo<T>::dtype == DType::kFloat8E4M3, "Invalid type!");
     } else {
       NVTE_CHECK(TypeInfo<T>::dtype == DType::kByte, "Invalid type!");
     }
@@ -264,8 +260,6 @@ class Tensor {
       NVTE_CHECK(TypeInfo<T>::dtype == DType::kFloat32, "Invalid type!");
     } else if (tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING) {
       // NVTE_CHECK(TypeInfo<T>::dtype == DType::kFloat8E8M0, "Invalid type!");
-    } else if (tensor_.scaling_mode() == NVTE_NVFP4_1D_SCALING) {
-      NVTE_CHECK(TypeInfo<T>::dtype == DType::kFloat8E4M3, "Invalid type!");
     } else {
       NVTE_CHECK(TypeInfo<T>::dtype == DType::kByte, "Invalid type!");
     }

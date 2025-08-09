@@ -334,10 +334,6 @@ enum NVTEQuantizationConfigAttribute {
    *  likely be refactored away in the future.
    */
   kNVTEQuantizationConfigFloat8BlockScaleTensorFormat = 3,
-  /*! Seed to initialize RNG */
-  kNVTEQuantizationConfigRNGSeed = 4,
-  /*! Sequence to initialize RNG */
-  kNVTEQuantizationConfigRNGSequence = 5,
   kNVTEQuantizationConfigNumAttributes
 };
 
@@ -853,20 +849,6 @@ class QuantizationConfigWrapper {
     nvte_set_quantization_config_attribute(config_,
                                            kNVTEQuantizationConfigFloat8BlockScaleTensorFormat,
                                            &format, sizeof(Float8BlockScaleTensorFormat));
-  }
-
-  /*! \brief Set stochastic rounding seed */
-  void set_rng_seed(size_t rng_seed) {
-    nvte_set_quantization_config_attribute(config_,
-                                           kNVTEQuantizationConfigRNGSeed,
-                                           &rng_seed, sizeof(size_t));
-  }
-
-  /*! \brief Set stochastic rounding sequence */
-  void set_rng_sequence(size_t rng_sequence) {
-    nvte_set_quantization_config_attribute(config_,
-                                           kNVTEQuantizationConfigRNGSequence,
-                                           &rng_sequence, sizeof(size_t));
   }
 
  private:

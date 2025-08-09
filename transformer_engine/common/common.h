@@ -298,16 +298,12 @@ struct QuantizationConfig {
   NVTETensor noop_tensor = nullptr;
   Float8BlockScaleTensorFormat float8_block_scale_tensor_format =
       Float8BlockScaleTensorFormat::GEMM_READY;
-  size_t rng_seed;
-  size_t rng_sequence;
 
   static constexpr size_t attr_sizes[] = {
       sizeof(bool),                         // force_pow_2_scales
       sizeof(float),                        // amax_epsilon
       sizeof(NVTETensor),                   // noop_tensor
-      sizeof(Float8BlockScaleTensorFormat), // float8_block_scale_tensor_format
-      sizeof(size_t),                       // RNG seed for stochastic rounding
-      sizeof(size_t)                        // RNG sequence for stochastic rounding
+      sizeof(Float8BlockScaleTensorFormat)  // float8_block_scale_tensor_format
   };
 };
 
