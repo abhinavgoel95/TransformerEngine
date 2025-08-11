@@ -233,3 +233,149 @@ def test_nvfp4_linear_versus_reference(
         x_dtype=x_dtype,
         num_steps=num_steps,
     )
+
+
+def check_nvfp4_layernorm_linear_versus_reference(
+    in_features: int,
+    out_features: int,
+    bias: bool,
+    normalization: str,
+    x_dtype: torch.dtype,
+    num_steps: int = 1,
+):
+    """
+    Compare native NVFP4 LayerNormLinear module against reference implementation,
+    including ln_out.
+    """
+    device = "cuda"
+    batch_size = 32
+    seq_len = 128
+
+    # Create both modules with identical initialization
+    cleanup_environment()
+    reset_rng_states()
+
+    # Native module
+    native_module = te.pytorch.LayerNormLinear(
+        in_features=in_features,
+        out_features=out_features,
+        bias=bias,
+        device=device,
+        params_dtype=x_dtype,
+        normalization=normalization,
+        return_layernorm_output=True,
+    )
+
+    # Reference module
+    setup_environment_for_reference()
+    reset_rng_states()
+    ref_module = te.pytorch.LayerNormLinear(
+        in_features=in_features,
+        out_features=out_features,
+        bias=bias,
+        device=device,
+        params_dtype=x_dtype,
+        normalization=normalization,
+        return_layernorm_output=True,
+    )
+
+    # Sync weights and LN params
+    with torch.no_grad():
+        if hasattr(native_module, 'weight') and hasattr(ref_module, 'weight'):
+            ref_module.weight.copy_(native_module.weight)
+        if bias and hasattr(native_module, 'bias') and hasattr(ref_module, 'bias'):
+            ref_module.bias.copy_(native_module.bias)
+        if hasattr(native_module, 'layer_norm_weight') and hasattr(ref_module, 'layer_norm_weight'):
+            if native_module.layer_norm_weight is not None and ref_module.layer_norm_weight is not None:
+                ref_module.layer_norm_weight.copy_(native_module.layer_norm_weight)
+        if hasattr(native_module, 'layer_norm_bias') and hasattr(ref_module, 'layer_norm_bias'):
+            if native_module.layer_norm_bias is not None and ref_module.layer_norm_bias is not None:
+                ref_module.layer_norm_bias.copy_(native_module.layer_norm_bias)
+
+    nvfp4_recipe = recipe.NVFP4BlockScaling()
+
+    native_outputs = []
+    ref_outputs = []
+
+    for step in range(num_steps):
+        torch.manual_seed(1234 + step)
+        torch.cuda.manual_seed(1234 + step)
+
+        x_shape = (batch_size, seq_len, in_features)
+        x_native = torch.randn(x_shape, dtype=x_dtype, device=device, requires_grad=True)
+        x_ref = x_native.clone().detach().requires_grad_(True)
+
+        grad_output_shape = (batch_size, seq_len, out_features)
+        grad_output = torch.randn(grad_output_shape, dtype=x_dtype, device=device)
+
+        # Native forward/backward
+        cleanup_environment()
+        with fp8_autocast(enabled=True, fp8_recipe=nvfp4_recipe):
+            y_native, ln_out_native = native_module(x_native, is_first_microbatch=(step == 0))
+        y_native.backward(grad_output)
+
+        # Reference forward/backward
+        setup_environment_for_reference()
+        with fp8_autocast(enabled=True, fp8_recipe=nvfp4_recipe):
+            y_ref, ln_out_ref = ref_module(x_ref)
+        y_ref.backward(grad_output)
+
+        native_outputs.append({
+            'output': y_native.detach().clone(),
+            'ln_out': ln_out_native.detach().clone(),
+            'input_grad': x_native.grad.detach().clone() if x_native.grad is not None else None,
+            'weight_grad': native_module.weight.grad.detach().clone() if native_module.weight.grad is not None else None,
+            'bias_grad': native_module.bias.grad.detach().clone() if bias and native_module.bias.grad is not None else None,
+        })
+        ref_outputs.append({
+            'output': y_ref.detach().clone(),
+            'ln_out': ln_out_ref.detach().clone(),
+            'input_grad': x_ref.grad.detach().clone() if x_ref.grad is not None else None,
+            'weight_grad': ref_module.weight.grad.detach().clone() if ref_module.weight.grad is not None else None,
+            'bias_grad': ref_module.bias.grad.detach().clone() if bias and ref_module.bias.grad is not None else None,
+        })
+
+    # Compare results
+    for step in range(num_steps):
+        n = native_outputs[step]
+        r = ref_outputs[step]
+        torch.testing.assert_close(n['output'], r['output'], atol=1e-2, rtol=1e-2,
+                                   msg=f"Output mismatch at step {step}")
+        torch.testing.assert_close(n['ln_out'], r['ln_out'], atol=1e-2, rtol=1e-2,
+                                   msg=f"LN output mismatch at step {step}")
+        torch.testing.assert_close(n['input_grad'], r['input_grad'], atol=1e-2, rtol=1e-2,
+                                   msg=f"Input gradient mismatch at step {step}")
+        torch.testing.assert_close(n['weight_grad'], r['weight_grad'], atol=1e-2, rtol=1e-2,
+                                   msg=f"Weight gradient mismatch at step {step}")
+        if bias and n['bias_grad'] is not None and r['bias_grad'] is not None:
+            torch.testing.assert_close(n['bias_grad'], r['bias_grad'], atol=1e-2, rtol=1e-2,
+                                       msg=f"Bias gradient mismatch at step {step}")
+
+    cleanup_environment()
+
+
+@pytest.mark.skipif(not recipe_available, reason=reason_for_no_recipe)
+@pytest.mark.parametrize("in_features, out_features", [
+    (128, 256),
+    (256, 128),
+])
+@pytest.mark.parametrize("bias", [False], ids=["no_bias"])
+@pytest.mark.parametrize("x_dtype", [torch.float32, torch.bfloat16], ids=str)
+@pytest.mark.parametrize("num_steps", [1], ids=["single_step"])
+@pytest.mark.parametrize("normalization", ["LayerNorm", "RMSNorm"], ids=["LayerNorm", "RMSNorm"])
+def test_nvfp4_layernorm_linear_versus_reference(
+    in_features: int,
+    out_features: int,
+    bias: bool,
+    normalization: str,
+    x_dtype: torch.dtype,
+    num_steps: int,
+):
+    check_nvfp4_layernorm_linear_versus_reference(
+        in_features=in_features,
+        out_features=out_features,
+        bias=bias,
+        normalization=normalization,
+        x_dtype=x_dtype,
+        num_steps=num_steps,
+    )
