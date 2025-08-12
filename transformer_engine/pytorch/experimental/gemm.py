@@ -5,7 +5,11 @@
 import torch
 from typing import Optional, Iterable
 
-from transformer_engine.pytorch.experimental.quantization import MMParams, GEMMType, ExperimentalQuantizedTensor
+from transformer_engine.pytorch.experimental.quantization import (
+    MMParams,
+    GEMMType,
+    ExperimentalQuantizedTensor,
+)
 from transformer_engine.pytorch.tensor.quantized_tensor import Quantizer
 
 
@@ -25,7 +29,9 @@ def experimental_gemm(
     grad: bool = False,
 ) -> Iterable[Optional[torch.Tensor]]:
     """Dispatch GEMM to quantizer's qgemm method."""
-    assert isinstance(A, ExperimentalQuantizedTensor) and isinstance(B, ExperimentalQuantizedTensor), "A and B must be ExperimentalQuantizedTensor instances"
+    assert isinstance(A, ExperimentalQuantizedTensor) and isinstance(
+        B, ExperimentalQuantizedTensor
+    ), "A and B must be ExperimentalQuantizedTensor instances"
 
     A, B = B, A
 
@@ -44,9 +50,9 @@ def experimental_gemm(
     # Extract quantizer from QuantizedTensor to get qgemm logic
     # TODO: make it more flexible, what if we might want to use gemm logic from B.quantizer?
     quantizer = None
-    if hasattr(A, 'quantizer') and A.quantizer is not None:
+    if hasattr(A, "quantizer") and A.quantizer is not None:
         quantizer = A.quantizer
-    elif hasattr(B, 'quantizer') and B.quantizer is not None:
+    elif hasattr(B, "quantizer") and B.quantizer is not None:
         quantizer = B.quantizer
     else:
         raise ValueError("No quantizer found in QuantizedETensor objects")
@@ -56,11 +62,7 @@ def experimental_gemm(
         out_dtype=out_dtype,
         use_split_accumulator=use_split_accumulator,
     )
-    out_dtype = (
-        A.dtype
-        if m_params.out_dtype is None
-        else m_params.out_dtype
-    )
+    out_dtype = A.dtype if m_params.out_dtype is None else m_params.out_dtype
 
     if gemm_type == GEMMType.FPROP:
         qx, sx = A.data, A.scale

@@ -3,7 +3,10 @@ from typing import Optional, Tuple
 
 from transformer_engine.pytorch.experimental import quantization
 from transformer_engine.pytorch.experimental import utils
-from transformer_engine.pytorch.experimental.quantization import ExperimentalQuantizedTensor, ExperimentalQuantizer
+from transformer_engine.pytorch.experimental.quantization import (
+    ExperimentalQuantizedTensor,
+    ExperimentalQuantizer,
+)
 
 
 def cast_to_fp4x2(x):
@@ -77,16 +80,12 @@ def cast_to_e8(decode_scale):
     exponent = torch.ceil(torch.log2(decode_scale))
     exponent = torch.clamp(exponent, min=-max_exponent, max=max_exponent)
 
-    return (
-        torch.tensor(2.0, device=decode_scale.device, dtype=torch.float32) ** exponent
-    )
+    return torch.tensor(2.0, device=decode_scale.device, dtype=torch.float32) ** exponent
 
 
 def cast_to_e4m3(decode_scale, global_amax):
     decode_scale = decode_scale * global_amax
-    FLOAT8_E4M3_MAX = torch.tensor(
-        448.0, device=decode_scale.device, dtype=torch.float32
-    )
+    FLOAT8_E4M3_MAX = torch.tensor(448.0, device=decode_scale.device, dtype=torch.float32)
     decode_scale = torch.clamp(decode_scale, min=-FLOAT8_E4M3_MAX, max=FLOAT8_E4M3_MAX)
     return decode_scale.to(torch.float8_e4m3fn)
 
@@ -121,9 +120,7 @@ def high_precision_gemm_ref(
         bias = bias.to(out_dtype)
         # With bias case
         if out_dtype == torch.float32:
-            y_ref = torch.addmm(
-                bias.repeat(mat1.size(0), 1), mat1, mat2, beta=1, alpha=1
-            )
+            y_ref = torch.addmm(bias.repeat(mat1.size(0), 1), mat1, mat2, beta=1, alpha=1)
         else:
             y_ref = torch.addmm(bias, mat1, mat2, beta=1, alpha=scale_alpha)
     else:
@@ -293,19 +290,13 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
                 decode_scale.to(torch.float32),
             )
         else:
-            global_encode_scale = torch.div(
-                FLOAT4_E2M1_MAX * FLOAT8_E4M3_MAX, global_amax
-            )
+            global_encode_scale = torch.div(FLOAT4_E2M1_MAX * FLOAT8_E4M3_MAX, global_amax)
             global_encode_scale = torch.clamp(
                 global_encode_scale,
                 max=torch.finfo(torch.float32).max,
             )
-            if global_encode_scale == torch.tensor(
-                0.0, device=x.device, dtype=torch.float32
-            ):
-                global_encode_scale = torch.tensor(
-                    1.0, device=x.device, dtype=torch.float32
-                )
+            if global_encode_scale == torch.tensor(0.0, device=x.device, dtype=torch.float32):
+                global_encode_scale = torch.tensor(1.0, device=x.device, dtype=torch.float32)
             decode_scale = cast_to_e4m3(decode_scale, global_encode_scale)
 
             encode_scale = torch.div(
@@ -318,9 +309,7 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
 
         # if not pow_2_scales:
         #     scaled_x = scaled_x * global_encode_scale
-        clipped_x = torch.clamp(scaled_x, -FLOAT4_E2M1_MAX, FLOAT4_E2M1_MAX).reshape(
-            m, n
-        )
+        clipped_x = torch.clamp(scaled_x, -FLOAT4_E2M1_MAX, FLOAT4_E2M1_MAX).reshape(m, n)
 
         return cast_to_fp4x2(clipped_x), decode_scale.squeeze(-1)
 
@@ -355,16 +344,20 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
         return out
 
     @staticmethod
-    def _rm_pad_tensor(
-        tensor: torch.Tensor, original_size: tuple[int, ...]
-    ) -> torch.Tensor:
+    def _rm_pad_tensor(tensor: torch.Tensor, original_size: tuple[int, ...]) -> torch.Tensor:
 
         assert tensor.dim() == 2, "only supports 2D tensors"
         M, N = original_size
         out = tensor[:M, :N].contiguous()
         return out
 
-    def _quantize(self, tensor: torch.Tensor) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor], torch.Tensor]:
+    def _quantize(self, tensor: torch.Tensor) -> Tuple[
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        torch.Tensor,
+    ]:
         """
         Python implementation of microblock FP4 quantization.
 
@@ -372,7 +365,7 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
         ----------
         tensor : torch.Tensor
             Input tensor to quantize (should be 2D)
-            
+
         Returns
         -------
         Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor], torch.Tensor]
@@ -534,7 +527,9 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
     def is_data_t_transposed_in_memory(self) -> bool:
         raise NotImplementedError("Not implemented yet")
 
-    def dequantize(self, tensor: torch.Tensor, scale: torch.Tensor, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+    def dequantize(
+        self, tensor: torch.Tensor, scale: torch.Tensor, dtype: Optional[torch.dtype] = None
+    ) -> torch.Tensor:
         """Dequantize the quantized tensor"""
         raise NotImplementedError("Not implemented yet")
 
@@ -579,9 +574,7 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
                 sx = sx.to(torch.float32)
                 sw = sw.to(torch.float32)
 
-            alpha = torch.tensor(
-                1.0, device=high_precision_x.device, dtype=torch.float32
-            )
+            alpha = torch.tensor(1.0, device=high_precision_x.device, dtype=torch.float32)
 
         else:
 
@@ -596,9 +589,7 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
 
             factor = 6.0 * 6.0 * 448.0 * 448.0
 
-            alpha = torch.div(
-                qresult_x.global_amax * qresult_w.global_amax, factor
-            ).squeeze(-1)
+            alpha = torch.div(qresult_x.global_amax * qresult_w.global_amax, factor).squeeze(-1)
 
         M, K = high_precision_x.shape
         N, K_w = high_precision_w.shape

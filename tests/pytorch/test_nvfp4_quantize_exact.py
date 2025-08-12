@@ -99,23 +99,27 @@ def check_quantization_nvfp4_versus_reference(
     # Extract data from RefNVFP4Tensor
     qx_ref = x_nvfp4_ref.data.view(dtype=torch.uint8) if x_nvfp4_ref.data is not None else None
     sx_ref = x_nvfp4_ref.scale.view(dtype=torch.uint8) if x_nvfp4_ref.scale is not None else None
-    qx_t_ref = x_nvfp4_ref.data_t.view(dtype=torch.uint8) if x_nvfp4_ref.data_t is not None else None  
-    sx_t_ref = x_nvfp4_ref.scale_t.view(dtype=torch.uint8) if x_nvfp4_ref.scale_t is not None else None
+    qx_t_ref = (
+        x_nvfp4_ref.data_t.view(dtype=torch.uint8) if x_nvfp4_ref.data_t is not None else None
+    )
+    sx_t_ref = (
+        x_nvfp4_ref.scale_t.view(dtype=torch.uint8) if x_nvfp4_ref.scale_t is not None else None
+    )
     ref_amax = x_nvfp4_ref.global_amax
 
     torch.testing.assert_close(qx, qx_ref, atol=0.0, rtol=0.0)
 
     # Compare only the valid portion of scale tensors (reference may not have padding)
     ref_sx_shape = sx_ref.shape
-    sx_valid = sx[:ref_sx_shape[0], :ref_sx_shape[1]]
+    sx_valid = sx[: ref_sx_shape[0], : ref_sx_shape[1]]
     torch.testing.assert_close(sx_valid, sx_ref, atol=0.0, rtol=0.0)
 
     if return_transpose:
         torch.testing.assert_close(qx_t, qx_t_ref, atol=0.0, rtol=0.0)
-        
+
         # Compare only the valid portion of transpose scale tensors
         ref_sx_t_shape = sx_t_ref.shape
-        sx_t_valid = sx_t[:ref_sx_t_shape[0], :ref_sx_t_shape[1]]
+        sx_t_valid = sx_t[: ref_sx_t_shape[0], : ref_sx_t_shape[1]]
         torch.testing.assert_close(sx_t_valid, sx_t_ref, atol=0.0, rtol=0.0)
 
     torch.testing.assert_close(qx_amax, ref_amax, atol=0.0, rtol=0.0)

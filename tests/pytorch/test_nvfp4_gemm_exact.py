@@ -69,9 +69,13 @@ def check_nvfp4_gemm_versus_reference(
     )
 
     # Quantize x and w
-    x_nvfp4_native = x_quantizer.make_empty(x_shape, dtype=x_dtype, device=device, requires_grad=False)
+    x_nvfp4_native = x_quantizer.make_empty(
+        x_shape, dtype=x_dtype, device=device, requires_grad=False
+    )
     x_nvfp4_native = x_quantizer.update_quantized(x, x_nvfp4_native)
-    w_nvfp4_native = w_quantizer.make_empty(w_shape, dtype=w_dtype, device=device, requires_grad=False)
+    w_nvfp4_native = w_quantizer.make_empty(
+        w_shape, dtype=w_dtype, device=device, requires_grad=False
+    )
     w_nvfp4_native = w_quantizer.update_quantized(w, w_nvfp4_native)
 
     # Extract quantized data from native NVFP4Tensors
@@ -85,8 +89,12 @@ def check_nvfp4_gemm_versus_reference(
         if w_columnwise
         else w_nvfp4_native._rowwise_data.view(dtype=torch.uint8)
     )
-    sx_native = x_nvfp4_native._columnwise_scale_inv if x_columnwise else x_nvfp4_native._rowwise_scale_inv
-    sw_native = w_nvfp4_native._columnwise_scale_inv if w_columnwise else w_nvfp4_native._rowwise_scale_inv
+    sx_native = (
+        x_nvfp4_native._columnwise_scale_inv if x_columnwise else x_nvfp4_native._rowwise_scale_inv
+    )
+    sw_native = (
+        w_nvfp4_native._columnwise_scale_inv if w_columnwise else w_nvfp4_native._rowwise_scale_inv
+    )
 
     # Trim quantized data to match the actual tensor dimensions (remove padding)
     qx_data = qx_data[:M, :]
@@ -131,7 +139,7 @@ def check_nvfp4_gemm_versus_reference(
         accumulate=accumulate,
         gemm_type=None,  # GEMMType not used in reference
         qresult_x=x_nvfp4_ref,
-        qresult_w=w_nvfp4_ref
+        qresult_w=w_nvfp4_ref,
     )
 
     # Native TE GEMM using tex.generic_gemm (cuBLAS GEMM)
@@ -202,9 +210,7 @@ def check_nvfp4_gemm_versus_reference(
 @pytest.mark.parametrize("x_dtype", [torch.float32, torch.bfloat16], ids=str)
 @pytest.mark.parametrize("w_dtype", [torch.float32, torch.bfloat16], ids=str)
 @pytest.mark.parametrize("out_dtype", [torch.bfloat16, torch.float32], ids=str)
-@pytest.mark.parametrize(
-    "accumulate", [True, False], ids=["accumulate", "no_accumulate"]
-)
+@pytest.mark.parametrize("accumulate", [True, False], ids=["accumulate", "no_accumulate"])
 @pytest.mark.parametrize(
     "is_x_columnwise, is_w_columnwise",
     [

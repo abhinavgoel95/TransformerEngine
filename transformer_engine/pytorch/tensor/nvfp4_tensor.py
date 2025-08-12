@@ -10,10 +10,11 @@ from typing import Optional, Tuple, Union
 
 import torch
 import transformer_engine_torch as tex
+from transformer_engine_torch import DType as TE_DType
 
 from transformer_engine.common.recipe import NVFP4BlockScaling, Recipe
-from ..constants import NVFP4_BLOCK_SCALING_SIZE
-from ..utils import devices_match, round_up_to_nearest_multiple
+from ..constants import NVFP4_BLOCK_SCALING_SIZE, dist_group_type
+from ..utils import canonicalize_process_group, devices_match, round_up_to_nearest_multiple
 
 from ._internal.nvfp4_tensor_base import NVFP4TensorBase, _FromNVFP4Func
 from .quantized_tensor import QuantizedTensor, Quantizer, _IdentityFunc
@@ -117,7 +118,8 @@ class NVFP4Quantizer(Quantizer):
             inner = round_up_to_nearest_multiple(math.ceil(K / NVFP4_BLOCK_SCALING_SIZE), 4)
             return (outer, inner)
 
-    def get_columnwise_shape(self, shape: Iterable[int]) -> Tuple[int, ...]:
+    @staticmethod
+    def get_columnwise_shape(shape: Iterable[int]) -> Tuple[int, ...]:
         """Calculate the shape of a tensor after columnwise quantization.
 
         For NVFP4 columnwise quantization, it's performing 16x1 quantization block scaling.
@@ -142,7 +144,8 @@ class NVFP4Quantizer(Quantizer):
             colwise_shape.append(shape[i])
         return tuple(colwise_shape)
 
-    def convert_shape_for_fp4(self, shape: Iterable[int]) -> Tuple[int, ...]:
+    @staticmethod
+    def convert_shape_for_fp4(shape: Iterable[int]) -> Tuple[int, ...]:
         """Convert shape for FP4 data by dividing the last dimension by 2"""
         shape = list(shape)
         shape[-1] = shape[-1] // 2
@@ -218,6 +221,10 @@ class NVFP4Quantizer(Quantizer):
         # TODO(ksivamani): No calibration?
         pass
 
+    def _canonicalized_amax_reduction_group(self) -> dist_group_type:
+        """Get process group for amax reduction"""
+        return canonicalize_process_group(self.amax_reduction_group)
+
     def _get_compatible_recipe(self) -> Union[type[Recipe], None]:
         return NVFP4BlockScaling
 
@@ -233,7 +240,7 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
     Parameters
     ----------
     data: torch.Tensor
-          Raw FP8 data in a uint4 tensor
+          Raw FP8 data in a uint8 tensor
     fp8_scale_inv: torch.Tensor
                    Reciprocal of the scaling factor applied when
                    casting to FP8, i.e. the scaling factor that must

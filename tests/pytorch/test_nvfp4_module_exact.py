@@ -43,7 +43,7 @@ def check_nvfp4_module_versus_reference(
     Args:
         module_class: te.Linear or te.LayerNormLinear
         in_features: Input feature dimension
-        out_features: Output feature dimension  
+        out_features: Output feature dimension
         bias: Whether to use bias
         x_dtype: Input tensor dtype
         num_steps: Number of forward/backward steps to test
@@ -103,15 +103,15 @@ def check_nvfp4_module_versus_reference(
     # Sync weights between native and reference modules
     with torch.no_grad():
         # Copy main weight and bias parameters
-        if hasattr(native_module, 'weight') and hasattr(ref_module, 'weight'):
+        if hasattr(native_module, "weight") and hasattr(ref_module, "weight"):
             ref_module.weight.copy_(native_module.weight)
-        if bias and hasattr(native_module, 'bias') and hasattr(ref_module, 'bias'):
+        if bias and hasattr(native_module, "bias") and hasattr(ref_module, "bias"):
             ref_module.bias.copy_(native_module.bias)
 
         # Copy layer norm parameters if they exist
-        if hasattr(native_module, 'layer_norm_weight') and hasattr(ref_module, 'layer_norm_weight'):
+        if hasattr(native_module, "layer_norm_weight") and hasattr(ref_module, "layer_norm_weight"):
             ref_module.layer_norm_weight.copy_(native_module.layer_norm_weight)
-        if hasattr(native_module, 'layer_norm_bias') and hasattr(ref_module, 'layer_norm_bias'):
+        if hasattr(native_module, "layer_norm_bias") and hasattr(ref_module, "layer_norm_bias"):
             ref_module.layer_norm_bias.copy_(native_module.layer_norm_bias)
 
     nvfp4_recipe = recipe.NVFP4BlockScaling()
@@ -140,65 +140,87 @@ def check_nvfp4_module_versus_reference(
 
         # Reference forward/backward
         setup_environment_for_reference()
-        with fp8_autocast(enabled=True, fp8_recipe=nvfp4_recipe):  # Exact recipe does not play a role here
+        with fp8_autocast(
+            enabled=True, fp8_recipe=nvfp4_recipe
+        ):  # Exact recipe does not play a role here
             y_ref = ref_module(x_ref)
         y_ref.backward(grad_output)
 
         # Store results
-        native_outputs.append({
-            'output': y_native.detach().clone(),
-            'input_grad': x_native.grad.detach().clone() if x_native.grad is not None else None,
-            'weight_grad': native_module.weight.grad.detach().clone() if native_module.weight.grad is not None else None,
-            'bias_grad': native_module.bias.grad.detach().clone() if bias and native_module.bias.grad is not None else None,
-        })
+        native_outputs.append(
+            {
+                "output": y_native.detach().clone(),
+                "input_grad": x_native.grad.detach().clone() if x_native.grad is not None else None,
+                "weight_grad": (
+                    native_module.weight.grad.detach().clone()
+                    if native_module.weight.grad is not None
+                    else None
+                ),
+                "bias_grad": (
+                    native_module.bias.grad.detach().clone()
+                    if bias and native_module.bias.grad is not None
+                    else None
+                ),
+            }
+        )
 
-        ref_outputs.append({
-            'output': y_ref.detach().clone(),
-            'input_grad': x_ref.grad.detach().clone() if x_ref.grad is not None else None,
-            'weight_grad': ref_module.weight.grad.detach().clone() if ref_module.weight.grad is not None else None,
-            'bias_grad': ref_module.bias.grad.detach().clone() if bias and ref_module.bias.grad is not None else None,
-        })
+        ref_outputs.append(
+            {
+                "output": y_ref.detach().clone(),
+                "input_grad": x_ref.grad.detach().clone() if x_ref.grad is not None else None,
+                "weight_grad": (
+                    ref_module.weight.grad.detach().clone()
+                    if ref_module.weight.grad is not None
+                    else None
+                ),
+                "bias_grad": (
+                    ref_module.bias.grad.detach().clone()
+                    if bias and ref_module.bias.grad is not None
+                    else None
+                ),
+            }
+        )
 
     # Compare results across all steps
     for step in range(num_steps):
         native_out = native_outputs[step]
         ref_out = ref_outputs[step]
-        
+
         # Compare outputs
         torch.testing.assert_close(
-            native_out['output'], 
-            ref_out['output'], 
-            atol=1e-2, 
+            native_out["output"],
+            ref_out["output"],
+            atol=1e-2,
             rtol=1e-2,
-            msg=f"Output mismatch at step {step}"
+            msg=f"Output mismatch at step {step}",
         )
 
         # Compare input gradients
         torch.testing.assert_close(
-            native_out['input_grad'], 
-            ref_out['input_grad'], 
-            atol=1e-2, 
+            native_out["input_grad"],
+            ref_out["input_grad"],
+            atol=1e-2,
             rtol=1e-2,
-            msg=f"Input gradient mismatch at step {step}"
+            msg=f"Input gradient mismatch at step {step}",
         )
 
         # Compare weight gradients
         torch.testing.assert_close(
-            native_out['weight_grad'], 
-            ref_out['weight_grad'], 
-            atol=1e-2, 
+            native_out["weight_grad"],
+            ref_out["weight_grad"],
+            atol=1e-2,
             rtol=1e-2,
-            msg=f"Weight gradient mismatch at step {step}"
+            msg=f"Weight gradient mismatch at step {step}",
         )
 
         # Compare bias gradients
-        if bias and native_out['bias_grad'] is not None and ref_out['bias_grad'] is not None:
+        if bias and native_out["bias_grad"] is not None and ref_out["bias_grad"] is not None:
             torch.testing.assert_close(
-                native_out['bias_grad'], 
-                ref_out['bias_grad'], 
-                atol=1e-2, 
+                native_out["bias_grad"],
+                ref_out["bias_grad"],
+                atol=1e-2,
                 rtol=1e-2,
-                msg=f"Bias gradient mismatch at step {step}"
+                msg=f"Bias gradient mismatch at step {step}",
             )
 
     # Clean up
@@ -206,13 +228,16 @@ def check_nvfp4_module_versus_reference(
 
 
 @pytest.mark.skipif(not recipe_available, reason=reason_for_no_recipe)
-@pytest.mark.parametrize("in_features, out_features", [
-    (128, 256),
-    (256, 128),
-    (512, 512),
-    (768, 3072),
-    (1024, 4096),
-])
+@pytest.mark.parametrize(
+    "in_features, out_features",
+    [
+        (128, 256),
+        (256, 128),
+        (512, 512),
+        (768, 3072),
+        (1024, 4096),
+    ],
+)
 # @pytest.mark.parametrize("bias", [True, False], ids=["with_bias", "no_bias"])
 @pytest.mark.parametrize("bias", [False], ids=["no_bias"])
 @pytest.mark.parametrize("x_dtype", [torch.float32, torch.bfloat16], ids=str)
@@ -281,14 +306,17 @@ def check_nvfp4_layernorm_linear_versus_reference(
 
     # Sync weights and LN params
     with torch.no_grad():
-        if hasattr(native_module, 'weight') and hasattr(ref_module, 'weight'):
+        if hasattr(native_module, "weight") and hasattr(ref_module, "weight"):
             ref_module.weight.copy_(native_module.weight)
-        if bias and hasattr(native_module, 'bias') and hasattr(ref_module, 'bias'):
+        if bias and hasattr(native_module, "bias") and hasattr(ref_module, "bias"):
             ref_module.bias.copy_(native_module.bias)
-        if hasattr(native_module, 'layer_norm_weight') and hasattr(ref_module, 'layer_norm_weight'):
-            if native_module.layer_norm_weight is not None and ref_module.layer_norm_weight is not None:
+        if hasattr(native_module, "layer_norm_weight") and hasattr(ref_module, "layer_norm_weight"):
+            if (
+                native_module.layer_norm_weight is not None
+                and ref_module.layer_norm_weight is not None
+            ):
                 ref_module.layer_norm_weight.copy_(native_module.layer_norm_weight)
-        if hasattr(native_module, 'layer_norm_bias') and hasattr(ref_module, 'layer_norm_bias'):
+        if hasattr(native_module, "layer_norm_bias") and hasattr(ref_module, "layer_norm_bias"):
             if native_module.layer_norm_bias is not None and ref_module.layer_norm_bias is not None:
                 ref_module.layer_norm_bias.copy_(native_module.layer_norm_bias)
 
@@ -320,45 +348,85 @@ def check_nvfp4_layernorm_linear_versus_reference(
             y_ref, ln_out_ref = ref_module(x_ref)
         y_ref.backward(grad_output)
 
-        native_outputs.append({
-            'output': y_native.detach().clone(),
-            'ln_out': ln_out_native.detach().clone(),
-            'input_grad': x_native.grad.detach().clone() if x_native.grad is not None else None,
-            'weight_grad': native_module.weight.grad.detach().clone() if native_module.weight.grad is not None else None,
-            'bias_grad': native_module.bias.grad.detach().clone() if bias and native_module.bias.grad is not None else None,
-        })
-        ref_outputs.append({
-            'output': y_ref.detach().clone(),
-            'ln_out': ln_out_ref.detach().clone(),
-            'input_grad': x_ref.grad.detach().clone() if x_ref.grad is not None else None,
-            'weight_grad': ref_module.weight.grad.detach().clone() if ref_module.weight.grad is not None else None,
-            'bias_grad': ref_module.bias.grad.detach().clone() if bias and ref_module.bias.grad is not None else None,
-        })
+        native_outputs.append(
+            {
+                "output": y_native.detach().clone(),
+                "ln_out": ln_out_native.detach().clone(),
+                "input_grad": x_native.grad.detach().clone() if x_native.grad is not None else None,
+                "weight_grad": (
+                    native_module.weight.grad.detach().clone()
+                    if native_module.weight.grad is not None
+                    else None
+                ),
+                "bias_grad": (
+                    native_module.bias.grad.detach().clone()
+                    if bias and native_module.bias.grad is not None
+                    else None
+                ),
+            }
+        )
+        ref_outputs.append(
+            {
+                "output": y_ref.detach().clone(),
+                "ln_out": ln_out_ref.detach().clone(),
+                "input_grad": x_ref.grad.detach().clone() if x_ref.grad is not None else None,
+                "weight_grad": (
+                    ref_module.weight.grad.detach().clone()
+                    if ref_module.weight.grad is not None
+                    else None
+                ),
+                "bias_grad": (
+                    ref_module.bias.grad.detach().clone()
+                    if bias and ref_module.bias.grad is not None
+                    else None
+                ),
+            }
+        )
 
     # Compare results
     for step in range(num_steps):
         n = native_outputs[step]
         r = ref_outputs[step]
-        torch.testing.assert_close(n['output'], r['output'], atol=1e-2, rtol=1e-2,
-                                   msg=f"Output mismatch at step {step}")
-        torch.testing.assert_close(n['ln_out'], r['ln_out'], atol=1e-2, rtol=1e-2,
-                                   msg=f"LN output mismatch at step {step}")
-        torch.testing.assert_close(n['input_grad'], r['input_grad'], atol=1e-2, rtol=1e-2,
-                                   msg=f"Input gradient mismatch at step {step}")
-        torch.testing.assert_close(n['weight_grad'], r['weight_grad'], atol=1e-2, rtol=1e-2,
-                                   msg=f"Weight gradient mismatch at step {step}")
-        if bias and n['bias_grad'] is not None and r['bias_grad'] is not None:
-            torch.testing.assert_close(n['bias_grad'], r['bias_grad'], atol=1e-2, rtol=1e-2,
-                                       msg=f"Bias gradient mismatch at step {step}")
+        torch.testing.assert_close(
+            n["output"], r["output"], atol=1e-2, rtol=1e-2, msg=f"Output mismatch at step {step}"
+        )
+        torch.testing.assert_close(
+            n["ln_out"], r["ln_out"], atol=1e-2, rtol=1e-2, msg=f"LN output mismatch at step {step}"
+        )
+        torch.testing.assert_close(
+            n["input_grad"],
+            r["input_grad"],
+            atol=1e-2,
+            rtol=1e-2,
+            msg=f"Input gradient mismatch at step {step}",
+        )
+        torch.testing.assert_close(
+            n["weight_grad"],
+            r["weight_grad"],
+            atol=1e-2,
+            rtol=1e-2,
+            msg=f"Weight gradient mismatch at step {step}",
+        )
+        if bias and n["bias_grad"] is not None and r["bias_grad"] is not None:
+            torch.testing.assert_close(
+                n["bias_grad"],
+                r["bias_grad"],
+                atol=1e-2,
+                rtol=1e-2,
+                msg=f"Bias gradient mismatch at step {step}",
+            )
 
     cleanup_environment()
 
 
 @pytest.mark.skipif(not recipe_available, reason=reason_for_no_recipe)
-@pytest.mark.parametrize("in_features, out_features", [
-    (128, 256),
-    (256, 128),
-])
+@pytest.mark.parametrize(
+    "in_features, out_features",
+    [
+        (128, 256),
+        (256, 128),
+    ],
+)
 @pytest.mark.parametrize("bias", [False], ids=["no_bias"])
 @pytest.mark.parametrize("x_dtype", [torch.float32, torch.bfloat16], ids=str)
 @pytest.mark.parametrize("num_steps", [1], ids=["single_step"])
