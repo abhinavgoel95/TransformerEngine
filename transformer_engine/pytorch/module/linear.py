@@ -1286,6 +1286,8 @@ class Linear(TransformerEngineBaseModule):
             self._customize_quantizers_float8_current_scaling(fwd, recipe)
         elif recipe.float8_block_scaling():
             self._customize_quantizers_float8_blockwise_scaling(fwd, recipe)
+        elif recipe.nvfp4():
+            self._customize_quantizers_nvfp4(fwd, recipe)
         # elif for other recipes (mxfp8, etc.)
 
     def reset_parameters(self, defer_init=False):
@@ -1603,6 +1605,28 @@ class Linear(TransformerEngineBaseModule):
                 tex.FP8BwdTensors.GRAD_OUTPUT1
             ].amax_epsilon = recipe.fp8_quant_bwd_grad.amax_epsilon
             # parallel related
+            if self.sequence_parallel and self.parallel_mode == "row":
+                # customize grad_output_quantizer with amax reduction TP group
+                self.quantizers["scaling_bwd"][
+                    tex.FP8BwdTensors.GRAD_OUTPUT1
+                ].with_amax_reduction = True
+                self.quantizers["scaling_bwd"][
+                    tex.FP8BwdTensors.GRAD_OUTPUT1
+                ].amax_reduction_group = self.tp_group
+
+    def _customize_quantizers_nvfp4(self, fwd: bool, recipe: Recipe) -> None:
+        """Customize quantizers based on current scaling recipe + linear."""
+        assert recipe.nvfp4(), "Incorrect recipe."
+        if fwd:
+            if self.sequence_parallel and self.parallel_mode == "column":
+                # customize input_quantizer with amax reduction TP group
+                self.quantizers["scaling_fwd"][
+                    tex.FP8FwdTensors.GEMM1_INPUT
+                ].with_amax_reduction = True
+                self.quantizers["scaling_fwd"][
+                    tex.FP8FwdTensors.GEMM1_INPUT
+                ].amax_reduction_group = self.tp_group
+        else:
             if self.sequence_parallel and self.parallel_mode == "row":
                 # customize grad_output_quantizer with amax reduction TP group
                 self.quantizers["scaling_bwd"][

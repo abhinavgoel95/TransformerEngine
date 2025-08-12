@@ -44,12 +44,16 @@ std::vector<T> convert_shape_for_fp4(const std::vector<T>& shape) {
 
 /*! convert fp4 data shape back to original shape */
 template <typename T = size_t>
-std::vector<T> convert_shape_back_from_fp4(const std::vector<T>& shape) {
+std::vector<T> convert_shape_back_from_fp4(const std::vector<T>& shape, bool transpose) {
   std::vector<T> ret;
-  for (size_t i = 0; i < shape.size() - 1; ++i) {
+  size_t start_idx = (transpose) ? 1 : 0;
+  for (size_t i = start_idx; i < shape.size() - 1; ++i) {
     ret.push_back(shape[i]);
   }
   ret.push_back(shape.back() * 2);
+  if (transpose) {
+    ret.push_back(shape.front());
+  }
   return ret;
 }
 
@@ -1339,8 +1343,7 @@ NVFP4Quantizer::NVFP4Quantizer(const py::handle& quantizer) : Quantizer(quantize
   c10::intrusive_ptr<dist_group_type> amax_reduction_group;
   if (with_amax_reduction) {
     auto group = quantizer.attr("_canonicalized_amax_reduction_group")();
-    NVTE_CHECK(!group.is_none(),
-               "Float8CurrentScalingQuantizer could not canonicalize amax reduction group");
+    NVTE_CHECK(!group.is_none(), "NVFP4Quantizer could not canonicalize amax reduction group");
     amax_reduction_group = group.cast<c10::intrusive_ptr<dist_group_type>>();
   }
   this->with_amax_reduction = with_amax_reduction;
@@ -1484,15 +1487,14 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
   // Tensor dimensions, shape means original shape
   std::vector<size_t> shape;
   if (columnwise_data) {
-    shape =
-        make_transpose_shape<size_t>(convert_shape_back_from_fp4(getTensorShape(*columnwise_data)));
+    shape = convert_shape_back_from_fp4(getTensorShape(*columnwise_data), true);
     if (rowwise_data) {
-      auto expected_shape = convert_shape_back_from_fp4(getTensorShape(*rowwise_data));
+      auto expected_shape = convert_shape_back_from_fp4(getTensorShape(*rowwise_data), false);
       NVTE_CHECK(shape == expected_shape, "NVFP4 row-wise data (shape=", expected_shape,
                  ") and column-wise data (shape=", shape, ") do not match");
     }
   } else {  // Already checked columnwise_data_tensor == true
-    shape = convert_shape_back_from_fp4(getTensorShape(*rowwise_data));
+    shape = convert_shape_back_from_fp4(getTensorShape(*rowwise_data), false);
   }
 
   // Coerce row-wise data
@@ -1625,8 +1627,24 @@ void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
 
   // amax reduction
   if (this->with_amax_reduction) {
-    // not supported yet
-    NVTE_CHECK(false, "amax reduction is not supported yet");
+    std::vector<at::Tensor> amax_tensors;
+    // push amax tensors inside if they need to be reduced
+    auto make_amax_tensor = [](void* data_ptr) {
+      return at::from_blob(
+          data_ptr, std::vector<int64_t>{1},
+          [](void*) {},  // deleter doing nothing since it doesn't own the data
+          at::device(at::kCUDA).dtype(torch::kFloat32));
+    };
+    if (rowwise_usage) {
+      amax_tensors.push_back(make_amax_tensor(out.get_amax().data_ptr));
+    }
+    if (columnwise_usage) {
+      amax_tensors.push_back(make_amax_tensor(out.get_columnwise_amax().data_ptr));
+    }
+    c10d::AllreduceCoalescedOptions opts;
+    opts.reduceOp = c10d::ReduceOp::MAX;
+    NVTE_SCOPED_GIL_RELEASE(
+        { this->amax_reduction_group->allreduce_coalesced(amax_tensors, opts)->wait(); });
   }
 
   NVTE_SCOPED_GIL_RELEASE({

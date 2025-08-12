@@ -21,6 +21,7 @@ class QLinearParams:
 
     Contains ready-to-use quantizers for input (x), weight (w), and gradient (g) tensors.
     """
+
     x_quantizer: Optional[quantization.ExperimentalQuantizer] = None
     w_quantizer: Optional[quantization.ExperimentalQuantizer] = None
     g_quantizer: Optional[quantization.ExperimentalQuantizer] = None
@@ -95,7 +96,7 @@ def set_qlinear_params(
             return None
         return get_qlinear_params_from_qat_params(qat_params_idx)
 
-     # Apply layer-specific overrides
+    # Apply layer-specific overrides
     if layer_number is not None:
         raise NotImplementedError("Layer-specific overrides are not supported yet.")
     if layer_name is not None:

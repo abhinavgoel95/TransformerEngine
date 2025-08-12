@@ -86,7 +86,9 @@ class ExperimentalQuantizedTensor(QuantizedTensorBase):
             return self.quantizer
         raise ValueError("Quantizer is not set")
 
-    def prepare_for_saving(self) -> Tuple[list[Optional[torch.Tensor]], ExperimentalQuantizedTensor]:
+    def prepare_for_saving(
+        self,
+    ) -> Tuple[list[Optional[torch.Tensor]], ExperimentalQuantizedTensor]:
         """Prepare the quantization result for saving for backward"""
         tensors = [self.data, self.data_t, self.scale, self.scale_t]
         self.data = None
@@ -95,7 +97,9 @@ class ExperimentalQuantizedTensor(QuantizedTensorBase):
         self.scale_t = None
         return tensors, self
 
-    def restore_from_saved(self, tensors: list[Optional[torch.Tensor]]) -> list[Optional[torch.Tensor]]:
+    def restore_from_saved(
+        self, tensors: list[Optional[torch.Tensor]]
+    ) -> list[Optional[torch.Tensor]]:
         """Restore the quantization result from the saved tensors"""
         self.data = tensors[0]
         self.data_t = tensors[1]

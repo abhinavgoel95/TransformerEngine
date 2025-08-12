@@ -68,8 +68,19 @@ def general_gemm(
     # If A or B are experimental tensors -> dispatch to quantizers's qgemm implementation
     if is_experimental(A) or is_experimental(B):
         return experimental_gemm(
-            A, B, workspace, out_dtype, quantization_params, gelu, gelu_in,
-            accumulate, layout, out, bias, use_split_accumulator, grad
+            A,
+            B,
+            workspace,
+            out_dtype,
+            quantization_params,
+            gelu,
+            gelu_in,
+            accumulate,
+            layout,
+            out,
+            bias,
+            use_split_accumulator,
+            grad,
         )
 
     debug_quantizer = None

@@ -460,6 +460,7 @@ def is_non_tn_fp8_gemm_supported() -> bool:
 def get_cudnn_version() -> Tuple[int, int, int]:
     """Runtime cuDNN version (major, minor, patch)"""
     import transformer_engine.pytorch.cpp_extensions as ext
+
     encoded_version = ext.get_cudnn_version()
     major_version_magnitude = 1000 if encoded_version < 90000 else 10000
     major, encoded_version = divmod(encoded_version, major_version_magnitude)
