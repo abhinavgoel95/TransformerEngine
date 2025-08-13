@@ -141,12 +141,12 @@ void nvte_compute_amax(const NVTETensor input_, const NVTETensor output_, cudaSt
   CheckOutputTensor(output, "output_compute_amax", true);
 
   // Compute amax
-  float *amax_ptr = reinterpret_cast<float *>((output.amax.dptr != nullptr) ? output.amax.dptr : output.columnwise_amax.dptr);
+  float *amax_ptr = reinterpret_cast<float *>(
+      (output.amax.dptr != nullptr) ? output.amax.dptr : output.columnwise_amax.dptr);
   TRANSFORMER_ENGINE_TYPE_SWITCH_INPUT(
-      input.data.dtype, IType, constexpr int nvec = 32 / sizeof(IType);
-      launch_amax_kernel<nvec>(reinterpret_cast<const IType *>(input.data.dptr),
-                               amax_ptr, input.data.numel(),
-                               stream););  // NOLINT(*)
+      input.data.dtype, IType, constexpr int nvec = 32 / sizeof(IType); launch_amax_kernel<nvec>(
+          reinterpret_cast<const IType *>(input.data.dptr), amax_ptr, input.data.numel(),
+          stream););  // NOLINT(*)
 }
 
 namespace transformer_engine {
