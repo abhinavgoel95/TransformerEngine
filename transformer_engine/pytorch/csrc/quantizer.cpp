@@ -1232,18 +1232,17 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::create_tensor(
   const auto bit4_tensor_opts = at::TensorOptions().dtype(torch::kUInt4).device(torch::kCUDA);
   const auto bit8_tensor_opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
   const auto bit32_tensor_opts = at::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
-  at::Tensor scale_inv = at::zeros({1}, bit32_tensor_opts);
   if (rowwise_usage) {
     const std::vector<int64_t> scale_inv_shape_int64(rowwise_scale_inv_shape.begin(),
                                                      rowwise_scale_inv_shape.end());
     rowwise_data_tensor = at::empty(shape_int64, bit4_tensor_opts);
-    rowwise_scale_inv_tensor = at::zeros(scale_inv_shape_int64, bit8_tensor_opts);
+    rowwise_scale_inv_tensor = at::empty(scale_inv_shape_int64, bit8_tensor_opts);
   }
   if (columnwise_usage) {
     const std::vector<int64_t> scale_inv_shape_int64(columnwise_scale_inv_shape.begin(),
                                                      columnwise_scale_inv_shape.end());
     columnwise_data_tensor = at::empty(shape_int64, bit8_tensor_opts);
-    columnwise_scale_inv_tensor = at::zeros(scale_inv_shape_int64, bit8_tensor_opts);
+    columnwise_scale_inv_tensor = at::empty(scale_inv_shape_int64, bit8_tensor_opts);
   }
 
   // Convert tensors to Python
@@ -1254,7 +1253,6 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::create_tensor(
   auto rowwise_scale_inv_py = py_cast(rowwise_scale_inv_tensor, rowwise_usage);
   auto columnwise_data_py = py_cast(columnwise_data_tensor, columnwise_usage);
   auto columnwise_scale_inv_py = py_cast(columnwise_scale_inv_tensor, columnwise_usage);
-  auto scale_inv_py = py_cast(scale_inv, true);
 
   // Construct Python MXFP8 tensor
   py::object out_py;
@@ -1265,7 +1263,6 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::create_tensor(
                                     "columnwise_data"_a = columnwise_data_py,
                                     "rowwise_scale_inv"_a = rowwise_scale_inv_py,
                                     "columnwise_scale_inv"_a = columnwise_scale_inv_py,
-                                    "per_tensor_rowwise_scale_inv"_a = scale_inv_py,
                                     "fp8_dtype"_a = this->dtype, "quantizer"_a = this->quantizer);
   } else {
     py::handle HybridNVFP4TensorClass(reinterpret_cast<PyObject*>(HybridNVFP4TensorPythonClass));
@@ -1274,7 +1271,6 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::create_tensor(
                                     "columnwise_data"_a = columnwise_data_py,
                                     "rowwise_scale_inv"_a = rowwise_scale_inv_py,
                                     "columnwise_scale_inv"_a = columnwise_scale_inv_py,
-                                    "per_tensor_rowwise_scale_inv"_a = scale_inv_py,
                                     "fp8_dtype"_a = this->dtype, "quantizer"_a = this->quantizer);
   }
 
@@ -1340,7 +1336,7 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::convert_and_update_te
       const std::vector<int64_t> scale_inv_shape_int64(scale_inv_shape.begin(),
                                                        scale_inv_shape.end());
       const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
-      rowwise_scale_inv = at::zeros(scale_inv_shape_int64, opts);
+      rowwise_scale_inv = at::empty(scale_inv_shape_int64, opts);
       tensor.attr("_rowwise_scale_inv") = *rowwise_scale_inv;
     }
   } else {  // rowwise_usage == false
@@ -1367,7 +1363,7 @@ std::pair<TensorWrapper, py::object> HybridNVFP4Quantizer::convert_and_update_te
       const std::vector<int64_t> scale_inv_shape_int64(scale_inv_shape.begin(),
                                                        scale_inv_shape.end());
       const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
-      columnwise_scale_inv = at::zeros(scale_inv_shape_int64, opts);
+      columnwise_scale_inv = at::empty(scale_inv_shape_int64, opts);
       tensor.attr("_columnwise_scale_inv") = *columnwise_scale_inv;
     }
   } else {  // columnwise_usage == false
@@ -1505,12 +1501,11 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::create_tensor(const std::ve
   at::Tensor columnwise_data_tensor, columnwise_scale_inv_tensor, amax_columnwise;
   const auto bit8_tensor_opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
   const auto bit32_tensor_opts = at::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
-  at::Tensor scale_inv = at::zeros({1}, bit32_tensor_opts);
   if (rowwise_usage) {
     const std::vector<int64_t> scale_inv_shape_int64(rowwise_scale_inv_shape.begin(),
                                                      rowwise_scale_inv_shape.end());
     rowwise_data_tensor = at::empty(convert_shape_for_fp4(shape_int64), bit8_tensor_opts);
-    rowwise_scale_inv_tensor = at::zeros(scale_inv_shape_int64, bit8_tensor_opts);
+    rowwise_scale_inv_tensor = at::empty(scale_inv_shape_int64, bit8_tensor_opts);
     amax_rowwise = at::zeros({1}, bit32_tensor_opts);
   }
   if (columnwise_usage) {
@@ -1519,7 +1514,7 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::create_tensor(const std::ve
     const auto transpose_shape_int64 = make_transpose_shape<int64_t>(shape_int64);
     columnwise_data_tensor =
         at::empty(convert_shape_for_fp4(transpose_shape_int64), bit8_tensor_opts);
-    columnwise_scale_inv_tensor = at::zeros(scale_inv_shape_int64, bit8_tensor_opts);
+    columnwise_scale_inv_tensor = at::empty(scale_inv_shape_int64, bit8_tensor_opts);
     amax_columnwise = at::zeros({1}, bit32_tensor_opts);
   }
 
@@ -1625,7 +1620,7 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
       const std::vector<int64_t> scale_inv_shape_int64(scale_inv_shape.begin(),
                                                        scale_inv_shape.end());
       const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
-      rowwise_scale_inv = at::zeros(scale_inv_shape_int64, opts);
+      rowwise_scale_inv = at::empty(scale_inv_shape_int64, opts);
       tensor.attr("_rowwise_scale_inv") = *rowwise_scale_inv;
     }
     if (!amax_rowwise) {
@@ -1662,7 +1657,7 @@ std::pair<TensorWrapper, py::object> NVFP4Quantizer::convert_and_update_tensor(
       const std::vector<int64_t> scale_inv_shape_int64(scale_inv_shape.begin(),
                                                        scale_inv_shape.end());
       const auto opts = at::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA);
-      columnwise_scale_inv = at::zeros(scale_inv_shape_int64, opts);
+      columnwise_scale_inv = at::empty(scale_inv_shape_int64, opts);
       tensor.attr("_columnwise_scale_inv") = *columnwise_scale_inv;
     }
     if (!amax_columnwise) {
