@@ -12,14 +12,6 @@ std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrap
                                                   bool rowwise) {
   using namespace transformer_engine::pytorch;
 
-  auto scaling_mode = input.scaling_mode();
-  bool is_nvfp4 = scaling_mode == NVTE_NVFP4_1D_SCALING;
-
-  auto data_te_dtype =
-      is_nvfp4 ? transformer_engine::DType::kFloat4E2M1 : transformer_engine::DType::kFloat8E4M3;
-  auto scale_inv_te_dtype =
-      is_nvfp4 ? transformer_engine::DType::kFloat8E4M3 : transformer_engine::DType::kFloat8E8M0;
-
   if (input.scaling_mode() == NVTE_INVALID_SCALING) {
     NVTE_ERROR("Invalid scaling mode for swizzle.");
   } else if (input.scaling_mode() != NVTE_MXFP8_1D_SCALING &&
@@ -30,7 +22,6 @@ std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrap
   NVTE_CHECK(input.element_size_bits() == 4 || input.element_size_bits() == 8,
              "4-bit or 8-bit input required for swizzling scaling factors.");
 
-  // For NVFP4, the transposed output also needs rowwise swizzle.
   const auto nvfp4 = input.scaling_mode() == NVTE_NVFP4_1D_SCALING;
 
   NVTEBasicTensor scale_inv;
@@ -66,7 +57,7 @@ std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrap
   void* swizzled_scale_inv_dptr = getDataPtr(swizzled_scale_inv, 0);
 
   // Reconstruct input only to avoid swizzling both directions if not needed.
-  // Use any 8 bit type, it's irrelevant.
+  // The specific dtype used is irrelevant, just needs to be correct bits.
   transformer_engine::TensorWrapper input_cu(input.scaling_mode());
   transformer_engine::TensorWrapper output_cu(input.scaling_mode());
 
@@ -75,17 +66,10 @@ std::optional<at::Tensor> swizzle_scaling_factors(transformer_engine::TensorWrap
   const auto scale_inv_dtype =
       (nvfp4) ? transformer_engine::DType::kFloat8E4M3 : transformer_engine::DType::kFloat8E8M0;
 
-  // Setting rowwise data ensures calling the rowwise swizzle kernel.
-  // For NVFP4, even the transposed data must be swizzled this way.
   if (rowwise) {
     input_cu.set_rowwise_data(input.dptr(), input_dtype, input_shape);
     input_cu.set_rowwise_scale_inv(scale_inv_dptr, scale_inv_dtype, scale_inv_shape);
     output_cu.set_rowwise_data(input.dptr(), input_dtype, input_shape);
-    output_cu.set_rowwise_scale_inv(swizzled_scale_inv_dptr, scale_inv_dtype, scale_inv_shape);
-  } else if (nvfp4) {
-    input_cu.set_rowwise_data(input.columnwise_dptr(), input_dtype, input_shape);
-    input_cu.set_rowwise_scale_inv(scale_inv_dptr, scale_inv_dtype, scale_inv_shape);
-    output_cu.set_rowwise_data(input.columnwise_dptr(), input_dtype, input_shape);
     output_cu.set_rowwise_scale_inv(swizzled_scale_inv_dptr, scale_inv_dtype, scale_inv_shape);
   } else {
     input_cu.set_columnwise_data(input.columnwise_dptr(), input_dtype, input_shape);

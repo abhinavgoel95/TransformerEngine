@@ -19,6 +19,7 @@ namespace transformer_engine {
 namespace {
 
 constexpr __device__ __host__ int MXFP8_BLOCK_SIZE = 32;
+constexpr __device__ __host__ int NVFP4_BLOCK_SIZE = 16;
 constexpr __device__ __host__ int TB_DIM = 32;
 constexpr __device__ __host__ int NEW_SF_TILE_DIM_K = 16;
 constexpr __device__ __host__ int N_SF_PER_TD_PER_TILE = 4;
@@ -339,20 +340,14 @@ void swizzle_scaling_factors(const Tensor* input, Tensor* output, cudaStream_t s
     return;
   }
 
-  //CheckInputTensor(*input, "scaling_factor_input");
-  //CheckInputTensor(*output, "scaling_factor_output");
+  CheckInputTensor(*input, "scaling_factor_input");
+  CheckInputTensor(*output, "scaling_factor_output");
 
   auto& scaling_mode = input->scaling_mode;
   NVTE_CHECK(scaling_mode == NVTE_MXFP8_1D_SCALING || scaling_mode == NVTE_NVFP4_1D_SCALING,
              "Unsupported scaling mode for swizzling.");
 
-  bool is_nvfp4 = scaling_mode == NVTE_NVFP4_1D_SCALING;
-  if (is_nvfp4) {
-    NVTE_CHECK(!(input->has_columnwise_data()),
-               "Columnwise swizzle for NVFP4 scaling should not be used.");
-    NVTE_CHECK(!(output->has_columnwise_data()),
-               "Columnwise swizzle for NVFP4 scaling should not be used.");
-  }
+  bool nvfp4 = scaling_mode == NVTE_NVFP4_1D_SCALING;
 
   // 1D block scaling, row-wise or colum-wise
   const int m =
@@ -382,49 +377,62 @@ void swizzle_scaling_factors(const Tensor* input, Tensor* output, cudaStream_t s
   int num_tiles_m = m / SF_TILE_DIM_M;
   int num_tiles_k = k / SF_TILE_DIM_K;
 
+  // For NVFP4, the scale inverse for tranposed data needs rowwise swizzle.
+  const bool rowwise_swizzle = input->has_data() || nvfp4;
+  const bool columnwise_swizzle = input->has_columnwise_data() && !nvfp4;
+
   dim3 block_size(TB_DIM, TB_DIM);
-  if (input->has_data()) {
+  if (rowwise_swizzle) {
     int vec_load_size = (num_tiles_k - 1) % 4 + 1;
     /* there is no int3 and misaligned if using int4/int2 */
     if (vec_load_size == 3) vec_load_size = 1;
     int n_tiles_in_tb = TB_DIM * vec_load_size;
     dim3 num_blocks(DIVUP(num_tiles_k, n_tiles_in_tb), num_tiles_m);
     int slm_size = n_tiles_in_tb * SF_TILE_DIM_M * SF_TILE_DIM_K * sizeof(int8_t);
-    int original_M = input->flat_first_dim();
-    int original_K = input->flat_last_dim() / MXFP8_BLOCK_SIZE;
-    if (is_nvfp4) {
-      // disable padding for nvfp4
-      original_M = m;
-      original_K = k;
+
+    int original_M, original_K;
+    void *input_scale_inv_ptr, *output_scale_inv_ptr;
+
+    if (!nvfp4 || input->has_data()) {
+      original_M = input->flat_first_dim();
+      original_K = input->flat_last_dim() / MXFP8_BLOCK_SIZE;
+      input_scale_inv_ptr = input->scale_inv.dptr;
+      output_scale_inv_ptr = output->scale_inv.dptr;
+    } else {
+      original_M = input->flat_last_dim();
+      original_K = input->flat_first_dim() / NVFP4_BLOCK_SIZE;
+      input_scale_inv_ptr = input->columnwise_scale_inv.dptr;
+      output_scale_inv_ptr = output->columnwise_scale_inv.dptr;
     }
+
     switch (vec_load_size) {
       case 4:
         cudaFuncSetAttribute(swizzle_row_scaling_kernel<int4, SF_TILE_DIM_M, SF_TILE_DIM_K>,
                              cudaFuncAttributeMaxDynamicSharedMemorySize, slm_size);
         swizzle_row_scaling_kernel<int4, SF_TILE_DIM_M, SF_TILE_DIM_K>
             <<<num_blocks, block_size, slm_size, stream>>>(
-                input->scale_inv.dptr, output->scale_inv.dptr, m, k, original_M, original_K);
+                input_scale_inv_ptr, output_scale_inv_ptr, m, k, original_M, original_K);
         break;
       case 2:
         cudaFuncSetAttribute(swizzle_row_scaling_kernel<int2, SF_TILE_DIM_M, SF_TILE_DIM_K>,
                              cudaFuncAttributeMaxDynamicSharedMemorySize, slm_size);
         swizzle_row_scaling_kernel<int2, SF_TILE_DIM_M, SF_TILE_DIM_K>
             <<<num_blocks, block_size, slm_size, stream>>>(
-                input->scale_inv.dptr, output->scale_inv.dptr, m, k, original_M, original_K);
+                input_scale_inv_ptr, output_scale_inv_ptr, m, k, original_M, original_K);
         break;
       case 1:
         cudaFuncSetAttribute(swizzle_row_scaling_kernel<int, SF_TILE_DIM_M, SF_TILE_DIM_K>,
                              cudaFuncAttributeMaxDynamicSharedMemorySize, slm_size);
         swizzle_row_scaling_kernel<int, SF_TILE_DIM_M, SF_TILE_DIM_K>
             <<<num_blocks, block_size, slm_size, stream>>>(
-                input->scale_inv.dptr, output->scale_inv.dptr, m, k, original_M, original_K);
+                input_scale_inv_ptr, output_scale_inv_ptr, m, k, original_M, original_K);
         break;
       default:
         NVTE_ERROR("Not valid vec_load_size.");
         break;
     }
   }
-  if (input->has_columnwise_data()) {
+  if (columnwise_swizzle) {
     int vec_load_size = (num_tiles_m - 1) % 4 + 1;
     if (vec_load_size == 3) vec_load_size = 1; /* no int3 and misaligned if using int4/int2 */
     int n_tiles_in_tb = TB_DIM * vec_load_size;
@@ -433,7 +441,7 @@ void swizzle_scaling_factors(const Tensor* input, Tensor* output, cudaStream_t s
     const int original_M = input->flat_last_dim();
     const int original_K = input->flat_first_dim() / MXFP8_BLOCK_SIZE;
     // NVFP4 shouldn't end up here because it only needs rowwise swizzle
-    NVTE_CHECK(!is_nvfp4, "NVFP4 shouldn't end up here because it only needs rowwise swizzle");
+    NVTE_CHECK(!nvfp4, "NVFP4 shouldn't end up here because it only needs rowwise swizzle");
 
     switch (vec_load_size) {
       case 4:
