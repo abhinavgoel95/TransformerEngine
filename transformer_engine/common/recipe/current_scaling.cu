@@ -132,7 +132,7 @@ void nvte_compute_amax(const NVTETensor input_, const NVTETensor output_, cudaSt
              "Output tensor for amax computation has invalid amax tensor "
              "(expected 1 entry, got shape=",
              output.amax.shape, ")");
-  NVTE_CHECK(output.amax.dptr != nullptr,
+  NVTE_CHECK(output.amax.dptr != nullptr || output.columnwise_amax.dptr != nullptr,
              "Output tensor for amax computation has amax tensor without data");
   NVTE_CHECK(output.amax.dtype == DType::kFloat32,
              "Output tensor for amax computation has invalid amax tensor  "
@@ -141,10 +141,11 @@ void nvte_compute_amax(const NVTETensor input_, const NVTETensor output_, cudaSt
   CheckOutputTensor(output, "output_compute_amax", true);
 
   // Compute amax
+  float *amax_ptr = reinterpret_cast<float *>((output.amax.dptr != nullptr) ? output.amax.dptr : output.columnwise_amax.dptr);
   TRANSFORMER_ENGINE_TYPE_SWITCH_INPUT(
       input.data.dtype, IType, constexpr int nvec = 32 / sizeof(IType);
       launch_amax_kernel<nvec>(reinterpret_cast<const IType *>(input.data.dptr),
-                               reinterpret_cast<float *>(output.amax.dptr), input.data.numel(),
+                               amax_ptr, input.data.numel(),
                                stream););  // NOLINT(*)
 }
 
