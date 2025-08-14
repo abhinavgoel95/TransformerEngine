@@ -178,31 +178,55 @@ using std::int32_t;
 using std::uint32_t;
 using std::uint8_t;
 
+/************ BEGIN - Kitchen float_to_e8m0_utils.cuh - BEGIN ***************/
+// NOTE: Just the `float_to_e8m0_ru_helper` is needed for the reference implementation.
+
+// Reference implementation ported from TransformerEngine
+// https://github.com/NVIDIA/TransformerEngine/blob/097afc00d72800ca7328ae1ff8a0d84399b51880/transformer_engine/common/utils.cuh#L933
+__device__ __forceinline__ uint8_t float_to_e8m0_ru_helper(float val) {
+  #if CUDA_VERSION >= 12080
+    constexpr cudaRoundMode kRoundingMode = cudaRoundPosInf;
+    constexpr __nv_saturation_t kSaturation = __NV_SATFINITE;
+    __nv_fp8_storage_t biased_exponent = __nv_cvt_float_to_e8m0(val, kSaturation, kRoundingMode);
+    return static_cast<uint8_t>(biased_exponent);
+  #else
+    NVTE_CHECK(false, "float_to_e8m0_ru conversion requires CUDA 12.8+");
+    return 0xFF;
+  #endif
+  }
+
+/************ END - Kitchen float_to_e8m0_utils.cuh - END ***************/
+
+/************ BEGIN - Kitchen device_math.cuh - BEGIN ***************/
+// NOTE: This is an exact copy of everything from device_math.cuh.
+
 #if CUDA_VERSION >= 12080
 template <typename T>
-struct Fp4LimitsTrait;
+struct FP4LimitsTrait;
 
 template <>
-struct Fp4LimitsTrait<__nv_fp4x2_storage_t> {
+struct FP4LimitsTrait<__nv_fp4x2_storage_t> {
   static constexpr float max = 6.0f;
+  static constexpr float max_inverse = 1.0 / max;
 };
-
 #endif
 // Type trait for extreme values of fp8 types.
 // Used in the calculation of scale factors
 // as a constexpr lookup from e4m3 or e5m2 to
 // the max finite value.
 template <typename T>
-struct F8LimitsTrait;
+struct FP8LimitsTrait;
 
 template <>
-struct F8LimitsTrait<__nv_fp8_e4m3> {
+struct FP8LimitsTrait<__nv_fp8_e4m3> {
   static constexpr float max = 448.0f;
+  static constexpr float max_inverse = 1.0 / max;
 };
 
 template <>
-struct F8LimitsTrait<__nv_fp8_e5m2> {
+struct FP8LimitsTrait<__nv_fp8_e5m2> {
   static constexpr float max = 57344.0f;
+  static constexpr float max_inverse = 1.0 / max;
 };
 
 // Type trait to resolve the max finite value
@@ -259,7 +283,7 @@ struct HighPrecisionFloatScaleLimitsTrait<half, true> {
 // eps: An epsilon used as a floor for amax.
 template <typename IType, typename OType, bool Power2Scaling>
 __device__ __forceinline__ float ComputeScale(const float amax, const float eps) {
-  constexpr float fp8_max = F8LimitsTrait<OType>::max;
+  constexpr float kFP8Max = FP8LimitsTrait<OType>::max;
 
   // Clamping amax to avoid division by small numbers
   float amax_mod = fmaxf(amax, eps);
@@ -270,7 +294,7 @@ __device__ __forceinline__ float ComputeScale(const float amax, const float eps)
     return 1.f;
   }
   // Compute scale factor
-  float scale = fp8_max / amax_mod;
+  float scale = kFP8Max / amax_mod;
 
   if (isinf(scale)) {
     // If scale is infinity, return max value of IType
@@ -323,50 +347,22 @@ __device__ __forceinline__ float ComputeScale(const float amax, const float eps)
 // global_scale: The global scale factor, only used for NVFP4 (Power2Scaling=false).
 
 template <typename OType, typename ScaleType, bool Power2Scaling>
-__device__ __forceinline__ ScaleType ComputeDecodeScaleFP4(const float amax,
-                                                           const float global_encode_scale) {
-  constexpr float fp4_max = Fp4LimitsTrait<OType>::max;
-
+__device__ __forceinline__ ScaleType
+ComputeDecodeScaleFP4(const float amax, const float global_encode_scale) {
   // Compute decode scale factor
-  float decode_scale = amax / fp4_max;
-
   if constexpr (Power2Scaling) {
-#if ((__CUDA_ARCH_HAS_FEATURE__(SM100_ALL)) || (__CUDA_ARCH_HAS_FEATURE__(SM101_ALL)) || \
-     (__CUDA_ARCH_HAS_FEATURE__(SM120_ALL)))
-
+    float decode_scale = amax * FP4LimitsTrait<OType>::max_inverse;
     if (isinf(decode_scale)) {
       return static_cast<ScaleType>(HighPrecisionFloatScaleLimitsTrait<float, true>::max);
     }
-    uint16_t out;
-    asm volatile(
-        "{\n"
-        "cvt.rp.satfinite.ue8m0x2.f32  %0, 0.0, %1;\n"
-        "}"
-        : "=h"(out)
-        : "f"(decode_scale));
+    auto out = float_to_e8m0_ru_helper(decode_scale);
     return *reinterpret_cast<ScaleType*>(&out);
-#else
-    // Clamp scale to avoid overflow, 0x1.0p127f is the largest value of e8m0
-    decode_scale = fminf(decode_scale, 0x1.0p127f);
-    // Clamp scale to avoid division by zero, 0x1.0p-127f is the smallest value of e8m0
-    if (decode_scale <= 0x1.0p-127f) {
-      return static_cast<ScaleType>(0.0f);
-    }
-    // for normal numbers, find the next power of 2
-    int* x_asint = (int*)(void*)&decode_scale;
-    const int x_mantissa = *x_asint & 0x7fffff;
-
-    if (x_mantissa) {
-      *x_asint += 0x800000;    // Increment the exponent by 1.
-      *x_asint &= 0xff800000;  // Zero out all mantissa bits.
-    }
-#endif
   } else {
+    float decode_scale = amax / FP4LimitsTrait<OType>::max;
     decode_scale = decode_scale * global_encode_scale;
     decode_scale = fminf(decode_scale, HighPrecisionFloatScaleLimitsTrait<float, false>::max);
+    return static_cast<ScaleType>(decode_scale);
   }
-
-  return static_cast<ScaleType>(decode_scale);
 }
 
 // Calculate the encode scale factor for a given decode scale factor.
@@ -376,15 +372,19 @@ __device__ __forceinline__ ScaleType ComputeDecodeScaleFP4(const float amax,
 // global_encode_scale: The global encode scale factor.
 // if Power2Scaling is false (E4M3), the output needs to multiply the global encode scale.
 template <typename ScaleType, bool Power2Scaling>
-__device__ __forceinline__ float ComputeEncodeScaleFP4(ScaleType decode_scale,
-                                                       const float global_encode_scale) {
+__device__ __forceinline__ float ComputeEncodeScaleFP4(
+    ScaleType decode_scale,
+    const float global_decode_scale) {
   if constexpr (Power2Scaling) {
     // for E8M0, the smallest value of decode_scale is 0x1.0p-127f
     return 1.0f / static_cast<float>(decode_scale);
   } else {
-    // for E4M3, the smallest value of decode_scale is 0.f, avoid overflow of encode scale
-    return fminf(global_encode_scale / static_cast<float>(decode_scale),
-                 HighPrecisionFloatScaleLimitsTrait<float, false>::max);
+    // for E4M3, the smallest value is 0.f, avoid overflow of encode scale
+    // NOTE: This is written in a weird way to match with the implementation of
+    // psx-formats.
+    return fminf(
+        1.0f / (static_cast<float>(decode_scale) * global_decode_scale),
+        HighPrecisionFloatScaleLimitsTrait<float, false>::max);
   }
 }
 
@@ -400,8 +400,8 @@ __device__ __forceinline__ float ComputeOutputFP4(IType input, float encode_scal
 
 // calculate the global encode scale factor for a given global amax.
 __device__ __forceinline__ float ComputeGlobalEncodeScaleFP4(const float global_amax) {
-  constexpr float fp8_max = F8LimitsTrait<__nv_fp8_e4m3>::max;
-  constexpr float fp4_max = Fp4LimitsTrait<__nv_fp4x2_storage_t>::max;
+  constexpr float fp8_max = FP8LimitsTrait<__nv_fp8_e4m3>::max;
+  constexpr float fp4_max = FP4LimitsTrait<__nv_fp4x2_storage_t>::max;
   float global_encode_scale = fp8_max * fp4_max / global_amax;
   // If scale is infinity, return max value of float32
   global_encode_scale =
@@ -414,6 +414,7 @@ __device__ __forceinline__ float ComputeGlobalEncodeScaleFP4(const float global_
 }
 
 #endif  // if CUDA_VERSION >= 12080
+/************ END - Kitchen device_math.cuh - END ***************/
 
 }  // namespace quantize_transpose_nvfp4
 

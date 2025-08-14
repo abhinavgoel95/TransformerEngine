@@ -290,26 +290,53 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
                 decode_scale.to(torch.float32),
             )
         else:
-            global_encode_scale = torch.div(FLOAT4_E2M1_MAX * FLOAT8_E4M3_MAX, global_amax)
-            global_encode_scale = torch.clamp(
-                global_encode_scale,
-                max=torch.finfo(torch.float32).max,
+            global_encode_scale = torch.div(
+                FLOAT4_E2M1_MAX * FLOAT8_E4M3_MAX, global_amax
             )
-            if global_encode_scale == torch.tensor(0.0, device=x.device, dtype=torch.float32):
-                global_encode_scale = torch.tensor(1.0, device=x.device, dtype=torch.float32)
-            decode_scale = cast_to_e4m3(decode_scale, global_encode_scale)
+            global_encode_scale = torch.min(
+                global_encode_scale,
+                torch.tensor(
+                    torch.finfo(torch.float32).max,
+                    device=global_encode_scale.device,
+                    dtype=torch.float32,
+                ),
+            )
+            if global_encode_scale == torch.tensor(
+                0.0, device=x.device, dtype=torch.float32
+            ):
+                global_encode_scale = torch.tensor(
+                    1.0, device=x.device, dtype=torch.float32
+                )
+            global_decode_scale = torch.div(1.0, global_encode_scale)
 
-            encode_scale = torch.div(
-                global_encode_scale,
-                decode_scale.to(torch.float32),
+            decode_scale = decode_scale * global_encode_scale
+            decode_scale = torch.min(
+                decode_scale,
+                torch.tensor(
+                    torch.finfo(torch.float32).max,
+                    device=decode_scale.device,
+                    dtype=torch.float32,
+                ),
             )
-            encode_scale = torch.clamp(encode_scale, max=torch.finfo(torch.float32).max)
+            decode_scale = torch.clamp(
+                decode_scale, min=-FLOAT8_E4M3_MAX, max=FLOAT8_E4M3_MAX
+            )
+            decode_scale = decode_scale.to(torch.float8_e4m3fn)
+
+            encode_scale = torch.min(
+                torch.div(1.0, decode_scale.to(torch.float32) * global_decode_scale),
+                torch.tensor(
+                    torch.finfo(torch.float32).max,
+                    device=decode_scale.device,
+                    dtype=torch.float32,
+                ),
+            )
 
         scaled_x = x.to(torch.float32) * encode_scale
 
-        # if not pow_2_scales:
-        #     scaled_x = scaled_x * global_encode_scale
-        clipped_x = torch.clamp(scaled_x, -FLOAT4_E2M1_MAX, FLOAT4_E2M1_MAX).reshape(m, n)
+        clipped_x = torch.clamp(scaled_x, -FLOAT4_E2M1_MAX, FLOAT4_E2M1_MAX).reshape(
+            m, n
+        )
 
         return cast_to_fp4x2(clipped_x), decode_scale.squeeze(-1)
 
