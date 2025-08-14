@@ -401,8 +401,9 @@ void swizzle_scaling_factors(const Tensor* input, Tensor* output, cudaStream_t s
     void *input_scale_inv_ptr, *output_scale_inv_ptr;
 
     if (!nvfp4 || input->has_data()) {
+      int block_scale_size = nvfp4 ? NVFP4_BLOCK_SIZE : MXFP8_BLOCK_SIZE;
       original_M = input->flat_first_dim();
-      original_K = input->flat_last_dim() / MXFP8_BLOCK_SIZE;
+      original_K = input->flat_last_dim() / block_scale_size;
       input_scale_inv_ptr = input->scale_inv.dptr;
       output_scale_inv_ptr = output->scale_inv.dptr;
     } else {
