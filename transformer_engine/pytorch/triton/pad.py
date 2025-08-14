@@ -10,48 +10,72 @@ import triton.language as tl
 
 @triton.jit
 def zero_pad_kernel(
-    inp_dim_0, inp_dim_1, inp_ptr, out_ptr, inp_stride_0, inp_stride_1, out_stride_0, out_stride_1
+    inp_ptr,
+    out_ptr,
+    in_dim0: tl.constexpr,
+    in_dim1: tl.constexpr,
+    out_dim0: tl.constexpr,
+    out_dim1: tl.constexpr,
+    in_s0,
+    in_s1,
+    out_s0,
+    out_s1,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
 ):
-    """Kernel for 0.0 padding a tensor."""
+    # tile over OUTPUT coordinates
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)  # output rows
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)  # output cols
+    om = offs_m[:, None]
+    on = offs_n[None, :]
 
-    # Calculate the thread's row and column in the output tensor
-    row = tl.program_id(0)
-    col = tl.program_id(1)
+    # edge masking for output
+    out_mask = (om < out_dim0) & (on < out_dim1)
 
-    # Handle out-of-bounds rows and columns (padding with zero)
-    if row < inp_dim_0 and col < inp_dim_1:
-        # Load data from the input tensor A
-        value = tl.load(inp_ptr + row * inp_stride_0 + col * inp_stride_1)
-    else:
-        # Zero padding in the out-of-bounds area
-        value = tl.cast(0, tl.uint8)
+    # valid input region is simply top-left (no offsets)
+    in_mask = (om < in_dim0) & (on < in_dim1)
 
-    # Write the value to the output tensor
-    tl.store(out_ptr + row * out_stride_0 + col * out_stride_1, value)
+    # load valid input, else zero (masked load touches memory only where True)
+    x = tl.load(inp_ptr + om * in_s0 + on * in_s1, mask=in_mask, other=0)
+
+    # store to output (only within bounds of the output tile)
+    tl.store(out_ptr + om * out_s0 + on * out_s1, x, mask=out_mask)
 
 
-def pad_columnwise_scale_inv(
-    tensor: torch.Tensor, dtype: torch.dtype = torch.uint8
-) -> torch.Tensor:
+def pad_columnwise_scale_inv(inp: torch.Tensor) -> torch.Tensor:
     """Pads a tensor assuming it's a columnwise scaling inverse."""
 
-    assert tensor.ndim == 2, "Unsupported ndim."
-    dim0, dim1 = tensor.shape
+    assert inp.ndim == 2
+    dim0, dim1 = inp.shape
 
-    # Compute padding sizes.
     pad_x = (128 - dim0 % 128) % 128
     pad_y = (4 - dim1 % 4) % 4
+    out_x = dim0 + pad_x
+    out_y = dim1 + pad_y
+    out = torch.empty((out_x, out_y), device=inp.device, dtype=inp.dtype)
 
-    # No padding needed.
-    if pad_x == 0 and pad_y == 0:
-        return tensor
+    in_s0, in_s1 = inp.stride()
+    out_s0, out_s1 = out.stride()
 
-    # Create the output tensor.
-    out = torch.empty((dim0 + pad_x, dim1 + pad_y), device=tensor.device, dtype=dtype)
+    BLOCK_M, BLOCK_N = 128, 128
+    grid = (triton.cdiv(out_x, BLOCK_M), triton.cdiv(out_y, BLOCK_N))
 
-    # Launch Triton kernel to perform the padding.
-    zero_pad_kernel[(dim0 + pad_x, dim1 + pad_y)](
-        dim0, dim1, tensor, out, tensor.stride(0), tensor.stride(1), out.stride(0), out.stride(1)
+    zero_pad_kernel[grid](
+        inp,
+        out,
+        dim0,
+        dim1,
+        out_x,
+        out_y,
+        in_s0,
+        in_s1,
+        out_s0,
+        out_s1,
+        BLOCK_M=BLOCK_M,
+        BLOCK_N=BLOCK_N,
+        num_warps=4,
+        num_stages=2,
     )
-
     return out

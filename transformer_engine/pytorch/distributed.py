@@ -1374,7 +1374,6 @@ def _all_gather_nvfp4(
             in_scale_inv = inp._rowwise_scale_inv
             out_scale_inv = out._rowwise_scale_inv
             flattened_in_shape0 = math.prod(in_shape[:-1])
-            # print check conditions for the if
             if in_scale_inv.size(0) != flattened_in_shape0:
                 in_scale_inv = in_scale_inv[:flattened_in_shape0]
                 out_scale_inv = out_scale_inv[: flattened_in_shape0 * world_size]
@@ -1401,14 +1400,16 @@ def _all_gather_nvfp4(
             # For doing an all-gather on transposed scale inverses,
             # we need to remove padding from both dimension.
             in_scale_inv = inp._columnwise_scale_inv
-            flattened_in_shape0 = math.prod(in_shape_t[:-1])
+            # take caution that for in_shape_t, flatten in the trailing dimensions!
+            flattened_in_shape0 = in_shape_t[0]
+            flattened_in_shape1 = math.prod(in_shape_t[1:])
 
             # Remove dim0 padding
             if in_scale_inv.size(0) != flattened_in_shape0:
                 in_scale_inv = in_scale_inv[:flattened_in_shape0]
 
             # Remove dim1 padding (pack first).
-            unpadded_dim1 = in_shape_t[-1] * 2 // 16
+            unpadded_dim1 = flattened_in_shape1 * 2 // 16
             if in_scale_inv.size(1) != unpadded_dim1:
                 in_scale_inv = in_scale_inv[:, :unpadded_dim1].contiguous()
 

@@ -9,6 +9,7 @@ import datetime
 import os
 import sys
 from functools import wraps
+import math
 
 import transformer_engine.pytorch as te
 import torch
@@ -26,6 +27,7 @@ from transformer_engine.common.recipe import (
 )
 from transformer_engine.pytorch.tensor.float8_tensor import Float8CurrentScalingQuantizer
 from transformer_engine.pytorch.tensor.nvfp4_tensor import NVFP4Quantizer
+from transformer_engine.pytorch.constants import NVFP4_BLOCK_SCALING_SIZE
 from transformer_engine.pytorch.distributed import gather_along_first_dim
 from run_layer_with_overlap import _compare_tensors
 
@@ -440,6 +442,59 @@ def test_quantizer():
 ############################################
 
 
+def _ref_zero_padding_scale_inv(scale_inv, unpadded_shape):
+    """
+    Zero padding the scale_inv.
+    scale_inv shape is the padded shape, but not zero padded
+    unpadded_shape is the original shape before padding
+    """
+    dim0, dim1 = scale_inv.shape
+    unpadded_dim0, unpadded_dim1 = unpadded_shape
+    pad_dim0 = (128 - unpadded_dim0 % 128) % 128
+    pad_dim1 = (4 - unpadded_dim1 % 4) % 4
+    new_dim0 = unpadded_dim0 + pad_dim0
+    new_dim1 = unpadded_dim1 + pad_dim1
+
+    assert dim0 == new_dim0
+    assert dim1 == new_dim1
+
+    # return input if no padding is needed
+    if pad_dim0 == 0 and pad_dim1 == 0:
+        return scale_inv
+
+    # unpad first to remove random bits from torch empty
+    scale_inv = scale_inv[:unpadded_dim0, :unpadded_dim1].contiguous()
+    # using torch padding
+    new_scale_inv = torch.nn.functional.pad(
+        scale_inv, (0, pad_dim1, 0, pad_dim0), mode="constant", value=0
+    )
+
+    assert new_scale_inv.shape == (new_dim0, new_dim1)
+
+    return new_scale_inv
+
+
+def _get_unpadded_scale_inv_shape(input_shape, quantizer_cls, columnwise):
+    """
+    Calculate the unpadded shape of the scale_inv tensor.
+    """
+    M, K = 1, 1
+    M = math.prod(input_shape[:-1])
+    K = input_shape[-1]
+
+    if quantizer_cls == NVFP4Quantizer:
+        if columnwise:
+            outer = K
+            inner = math.ceil(M / NVFP4_BLOCK_SCALING_SIZE)
+            return (outer, inner)
+        else:
+            outer = M
+            inner = math.ceil(K / NVFP4_BLOCK_SCALING_SIZE)
+            return (outer, inner)
+    else:
+        raise ValueError(f"Unsupported quantizer class: {quantizer_cls}")
+
+
 @run_distributed_test()
 def _test_quantized_all_gather(input_dtype, low_precision_dtype, quantizer_cls):
     """Test the quantizer under distributed settings.
@@ -456,6 +511,10 @@ def _test_quantized_all_gather(input_dtype, low_precision_dtype, quantizer_cls):
     # set one element of the input to a very large value, which doesn't live in rank 0 after the split
     # to test the amax reduction on purpose
     # x_hp_cpu[M - 1, N - 1] = 1e4
+
+    # get the unpadded shapes
+    unpadded_rowwise_scale_inv_shape = _get_unpadded_scale_inv_shape((M, N), quantizer_cls, False)
+    unpadded_columnwise_scale_inv_shape = _get_unpadded_scale_inv_shape((M, N), quantizer_cls, True)
 
     # rank 0 takes the full copy and quantize with GPU 0 for verification
     if WORLD_RANK == 0:
@@ -485,6 +544,30 @@ def _test_quantized_all_gather(input_dtype, low_precision_dtype, quantizer_cls):
             rtol=0.0,
             atol=0.0,
         )
+        # check the rowwise scale without any padding
+        unpad_dim0, unpad_dim1 = unpadded_rowwise_scale_inv_shape
+        unpadded_rowwise_scale_inv_ref = x_low_precision_single._rowwise_scale_inv[
+            :unpad_dim0, :unpad_dim1
+        ]
+        unpadded_rowwise_scale_inv = x_low_precision_total._rowwise_scale_inv[
+            :unpad_dim0, :unpad_dim1
+        ]
+        torch.testing.assert_close(
+            unpadded_rowwise_scale_inv_ref,
+            unpadded_rowwise_scale_inv,
+            rtol=0.0,
+            atol=0.0,
+        )
+        torch.testing.assert_close(
+            _ref_zero_padding_scale_inv(
+                x_low_precision_single._rowwise_scale_inv, unpadded_rowwise_scale_inv_shape
+            ),
+            _ref_zero_padding_scale_inv(
+                x_low_precision_total._rowwise_scale_inv, unpadded_rowwise_scale_inv_shape
+            ),
+            rtol=0.0,
+            atol=0.0,
+        )
         torch.testing.assert_close(
             x_low_precision_single._rowwise_scale_inv,
             x_low_precision_total._rowwise_scale_inv,
@@ -497,9 +580,26 @@ def _test_quantized_all_gather(input_dtype, low_precision_dtype, quantizer_cls):
             rtol=0.0,
             atol=0.0,
         )
+        unpad_dim0, unpad_dim1 = unpadded_columnwise_scale_inv_shape
+        unpadded_columnwise_scale_inv_ref = x_low_precision_single._columnwise_scale_inv[
+            :unpad_dim0, :unpad_dim1
+        ]
+        unpadded_columnwise_scale_inv = x_low_precision_total._columnwise_scale_inv[
+            :unpad_dim0, :unpad_dim1
+        ]
         torch.testing.assert_close(
-            x_low_precision_single._columnwise_scale_inv,
-            x_low_precision_total._columnwise_scale_inv,
+            unpadded_columnwise_scale_inv_ref,
+            unpadded_columnwise_scale_inv,
+            rtol=0.0,
+            atol=0.0,
+        )
+        torch.testing.assert_close(
+            _ref_zero_padding_scale_inv(
+                x_low_precision_single._columnwise_scale_inv, unpadded_columnwise_scale_inv_shape
+            ),
+            _ref_zero_padding_scale_inv(
+                x_low_precision_total._columnwise_scale_inv, unpadded_columnwise_scale_inv_shape
+            ),
             rtol=0.0,
             atol=0.0,
         )
