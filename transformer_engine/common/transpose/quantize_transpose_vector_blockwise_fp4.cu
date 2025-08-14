@@ -165,6 +165,7 @@ __global__ void __launch_bounds__(kThreadsPerBlock) block_scaled_1d_cast_transpo
   const int kNumThreadsReduce = kScaleBlockDim / kNVecOut;
   const float global_encode_scale =
       kIsE8Scaling ? 1.0f : ComputeGlobalEncodeScaleFP4(global_amax[0]);
+  const float global_decode_scale = 1.0 / global_encode_scale;
   // Step 2: Cast and store to output_c
   if constexpr (kReturnIdentity) {
     constexpr int r_stride =
@@ -223,7 +224,7 @@ __global__ void __launch_bounds__(kThreadsPerBlock) block_scaled_1d_cast_transpo
       ScaleType scale_inv =
           ComputeDecodeScaleFP4<OType, ScaleType, kIsE8Scaling>(amax, global_encode_scale);
       float encode_scale =
-          ComputeEncodeScaleFP4<ScaleType, kIsE8Scaling>(scale_inv, global_encode_scale);
+          ComputeEncodeScaleFP4<ScaleType, kIsE8Scaling>(scale_inv, global_decode_scale);
       // Step 2.5: Write scale_inv
       bool write_scale_inv = is_src_lane;
       if constexpr (!kAligned) {
@@ -331,7 +332,7 @@ __global__ void __launch_bounds__(kThreadsPerBlock) block_scaled_1d_cast_transpo
         ScaleType scale_inv =
             ComputeDecodeScaleFP4<OType, ScaleType, kIsE8Scaling>(amax, global_encode_scale);
         float encode_scale =
-            ComputeEncodeScaleFP4<ScaleType, kIsE8Scaling>(scale_inv, global_encode_scale);
+            ComputeEncodeScaleFP4<ScaleType, kIsE8Scaling>(scale_inv, global_decode_scale);
         // Step 3.5: Write scale_inv_t
         bool write_scale_inv = is_src_lane;
         if constexpr (!kAligned) {
