@@ -441,6 +441,7 @@ def test_quantizer():
 #            Quantized All-Gather          #
 ############################################
 
+
 def _ref_zero_padding_scale_inv(scale_inv, unpadded_shape):
     """
     Zero padding the scale_inv.
@@ -464,7 +465,9 @@ def _ref_zero_padding_scale_inv(scale_inv, unpadded_shape):
     # unpad first to remove random bits from torch empty
     scale_inv = scale_inv[:unpadded_dim0, :unpadded_dim1].contiguous()
     # using torch padding
-    new_scale_inv = torch.nn.functional.pad(scale_inv, (0, pad_dim1, 0, pad_dim0), mode="constant", value=0)
+    new_scale_inv = torch.nn.functional.pad(
+        scale_inv, (0, pad_dim1, 0, pad_dim0), mode="constant", value=0
+    )
 
     assert new_scale_inv.shape == (new_dim0, new_dim1)
 
@@ -472,6 +475,9 @@ def _ref_zero_padding_scale_inv(scale_inv, unpadded_shape):
 
 
 def _get_unpadded_scale_inv_shape(input_shape, quantizer_cls, columnwise):
+    """
+    Calculate the unpadded shape of the scale_inv tensor.
+    """
     M, K = 1, 1
     M = math.prod(input_shape[:-1])
     K = input_shape[-1]
@@ -540,8 +546,12 @@ def _test_quantized_all_gather(input_dtype, low_precision_dtype, quantizer_cls):
         )
         # check the rowwise scale without any padding
         unpad_dim0, unpad_dim1 = unpadded_rowwise_scale_inv_shape
-        unpadded_rowwise_scale_inv_ref = x_low_precision_single._rowwise_scale_inv[:unpad_dim0, :unpad_dim1]
-        unpadded_rowwise_scale_inv = x_low_precision_total._rowwise_scale_inv[:unpad_dim0, :unpad_dim1]
+        unpadded_rowwise_scale_inv_ref = x_low_precision_single._rowwise_scale_inv[
+            :unpad_dim0, :unpad_dim1
+        ]
+        unpadded_rowwise_scale_inv = x_low_precision_total._rowwise_scale_inv[
+            :unpad_dim0, :unpad_dim1
+        ]
         torch.testing.assert_close(
             unpadded_rowwise_scale_inv_ref,
             unpadded_rowwise_scale_inv,
@@ -549,8 +559,12 @@ def _test_quantized_all_gather(input_dtype, low_precision_dtype, quantizer_cls):
             atol=0.0,
         )
         torch.testing.assert_close(
-            _ref_zero_padding_scale_inv(x_low_precision_single._rowwise_scale_inv, unpadded_rowwise_scale_inv_shape),
-            _ref_zero_padding_scale_inv(x_low_precision_total._rowwise_scale_inv, unpadded_rowwise_scale_inv_shape),
+            _ref_zero_padding_scale_inv(
+                x_low_precision_single._rowwise_scale_inv, unpadded_rowwise_scale_inv_shape
+            ),
+            _ref_zero_padding_scale_inv(
+                x_low_precision_total._rowwise_scale_inv, unpadded_rowwise_scale_inv_shape
+            ),
             rtol=0.0,
             atol=0.0,
         )
@@ -567,8 +581,12 @@ def _test_quantized_all_gather(input_dtype, low_precision_dtype, quantizer_cls):
             atol=0.0,
         )
         unpad_dim0, unpad_dim1 = unpadded_columnwise_scale_inv_shape
-        unpadded_columnwise_scale_inv_ref = x_low_precision_single._columnwise_scale_inv[:unpad_dim0, :unpad_dim1]
-        unpadded_columnwise_scale_inv = x_low_precision_total._columnwise_scale_inv[:unpad_dim0, :unpad_dim1]
+        unpadded_columnwise_scale_inv_ref = x_low_precision_single._columnwise_scale_inv[
+            :unpad_dim0, :unpad_dim1
+        ]
+        unpadded_columnwise_scale_inv = x_low_precision_total._columnwise_scale_inv[
+            :unpad_dim0, :unpad_dim1
+        ]
         torch.testing.assert_close(
             unpadded_columnwise_scale_inv_ref,
             unpadded_columnwise_scale_inv,
@@ -576,8 +594,12 @@ def _test_quantized_all_gather(input_dtype, low_precision_dtype, quantizer_cls):
             atol=0.0,
         )
         torch.testing.assert_close(
-            _ref_zero_padding_scale_inv(x_low_precision_single._columnwise_scale_inv, unpadded_columnwise_scale_inv_shape),
-            _ref_zero_padding_scale_inv(x_low_precision_total._columnwise_scale_inv, unpadded_columnwise_scale_inv_shape),
+            _ref_zero_padding_scale_inv(
+                x_low_precision_single._columnwise_scale_inv, unpadded_columnwise_scale_inv_shape
+            ),
+            _ref_zero_padding_scale_inv(
+                x_low_precision_total._columnwise_scale_inv, unpadded_columnwise_scale_inv_shape
+            ),
             rtol=0.0,
             atol=0.0,
         )
