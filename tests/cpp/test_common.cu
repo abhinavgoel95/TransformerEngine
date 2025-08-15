@@ -173,6 +173,34 @@ std::pair<scale_inv_meta, scale_inv_meta> get_scales(const NVTEShape& shape,
 
     return {ret_rowwise, ret_colwise};
   }
+  if (scaling_mode == NVTE_NVFP4_1D_SCALING) {
+    std::vector<size_t> shape_vec;
+    for (size_t i = 0; i < shape.ndim; ++i) {
+      shape_vec.push_back(shape.data[i]);
+    }
+    size_t first_dim = first_dimension(shape_vec);
+    size_t last_dim = last_dimension(shape_vec);
+
+    NVTE_CHECK(last_dim % 32 == 0);
+    NVTE_CHECK(first_dim % 32 == 0);
+
+    scale_inv_meta ret_rowwise, ret_colwise;
+
+    size_t scale_dim_Y = DIVUP_TO_MULTIPLE(first_dim, scale_tensor_alignment_Y_rowwise);
+    size_t scale_dim_X = DIVUP_TO_MULTIPLE(DIVUP(last_dim, 16lu), scale_tensor_alignment_X_rowwise);
+    ret_rowwise.shape = {scale_dim_Y, scale_dim_X};
+
+    size_t scale_dim_Y_t = DIVUP_TO_MULTIPLE(last_dim, scale_tensor_alignment_Y_rowwise);
+    size_t scale_dim_X_t = DIVUP_TO_MULTIPLE(DIVUP(first_dim, 16lu), scale_tensor_alignment_X_rowwise);
+    ret_colwise.shape = {scale_dim_Y_t, scale_dim_X_t};
+
+    ret_rowwise.type = DType::kFloat8E4M3;
+    ret_rowwise.type_size_bits = typeToNumBits(DType::kFloat8E4M3);
+    ret_colwise.type = DType::kFloat8E4M3;
+    ret_colwise.type_size_bits = typeToNumBits(DType::kFloat8E4M3);
+
+    return {ret_rowwise, ret_colwise};
+  }
   if (scaling_mode == NVTE_MXFP8_1D_SCALING) {
     std::vector<size_t> shape_vec;
     for (size_t i = 0; i < shape.ndim; ++i) {
@@ -319,12 +347,12 @@ Tensor::Tensor(const std::string& name,
       std::fill_n(cpu_data_columnwise_.get(), total_size, 0);
     }
   }
-  if (scaling_mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING) {
-    tensor_.set_rowwise_data(dptr_rowwise, DType::kFloat4E2M1, shape);
-  } else {
-    tensor_.set_rowwise_data(dptr_rowwise, type, shape);
-  }
-  tensor_.set_columnwise_data(dptr_columnwise, type, columnwise_shape);
+
+  const DType rowwise_type = (scaling_mode == NVTE_NVFP4_1D_SCALING
+                              || scaling_mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING) ? DType::kFloat4E2M1 : type;
+  const DType colwise_type = (scaling_mode == NVTE_NVFP4_1D_SCALING) ? DType::kFloat4E2M1 : type;
+  tensor_.set_rowwise_data(dptr_rowwise, rowwise_type, shape);
+  tensor_.set_columnwise_data(dptr_columnwise, colwise_type, columnwise_shape);
 
   if (isFp8Type(type) || isFp4Type(type)) {
     if (scaling_mode == NVTE_DELAYED_TENSOR_SCALING) {
@@ -350,7 +378,7 @@ Tensor::Tensor(const std::string& name,
         std::fill_n(columnwise_scale_inv_cpu_data_.get(), sizeof(float), 0);
       }
     } else {
-      if (scaling_mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING) {
+      if ((scaling_mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING) || (scaling_mode == NVTE_NVFP4_1D_SCALING)) {
         // Used for NVFP4 second stage scaling
         cudaMalloc((void**)&scale, sizeof(float));  // NOLINT(*)
         cudaMemset(scale, 0, sizeof(float));
@@ -392,7 +420,7 @@ void Tensor::to_cpu() const {
                cudaMemcpyDeviceToHost);
   }
   if (columnwise_) {
-    const DType colwise_type = (tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING)
+    const DType colwise_type = ((tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING))
                                ? DType::kFloat8E4M3
                                : tensor_.dtype();
 
@@ -403,8 +431,7 @@ void Tensor::to_cpu() const {
                 cudaMemcpyDeviceToHost);
   }
   if (isFp8Type(dtype()) || isFp4Type(dtype())) {
-    if ((tensor_.scaling_mode() == NVTE_DELAYED_TENSOR_SCALING)
-        || (tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING)) {
+    if ((tensor_.scaling_mode() == NVTE_DELAYED_TENSOR_SCALING)) {
       if (tensor_.amax() != nullptr){
         cudaMemcpy(amax_cpu_data_.get(),
                   tensor_.amax(),
@@ -447,7 +474,8 @@ void Tensor::from_cpu() const {
   }
   if (isFp8Type(dtype()) || isFp4Type(dtype())) {
     if ((tensor_.scaling_mode() == NVTE_DELAYED_TENSOR_SCALING)
-        || (tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING)) {
+        || (tensor_.scaling_mode() == NVTE_HYBRID_NVFP4_MXFP8_SCALING)
+        || (tensor_.scaling_mode() == NVTE_NVFP4_1D_SCALING)) {
       if (tensor_.amax() != nullptr){
         cudaMemcpy(tensor_.amax(), amax_cpu_data_.get(), sizeof(float), cudaMemcpyHostToDevice);
       }

@@ -342,8 +342,8 @@ __device__ __forceinline__ float ComputeScale(const float amax, const float eps)
 // global_scale: The global scale factor, only used for NVFP4 (Power2Scaling=false).
 
 template <typename OType, typename ScaleType, bool Power2Scaling>
-__device__ __forceinline__ ScaleType
-ComputeDecodeScaleFP4(const float amax, const float global_encode_scale) {
+__device__ __forceinline__ ScaleType ComputeDecodeScaleFP4(const float amax,
+                                                           const float global_encode_scale) {
   // Compute decode scale factor
   if constexpr (Power2Scaling) {
     float decode_scale = amax * FP4LimitsTrait<OType>::max_inverse;
@@ -367,9 +367,8 @@ ComputeDecodeScaleFP4(const float amax, const float global_encode_scale) {
 // global_encode_scale: The global encode scale factor.
 // if Power2Scaling is false (E4M3), the output needs to multiply the global encode scale.
 template <typename ScaleType, bool Power2Scaling>
-__device__ __forceinline__ float ComputeEncodeScaleFP4(
-    ScaleType decode_scale,
-    const float global_decode_scale) {
+__device__ __forceinline__ float ComputeEncodeScaleFP4(ScaleType decode_scale,
+                                                       const float global_decode_scale) {
   if constexpr (Power2Scaling) {
     // for E8M0, the smallest value of decode_scale is 0x1.0p-127f
     return 1.0f / static_cast<float>(decode_scale);
@@ -377,9 +376,8 @@ __device__ __forceinline__ float ComputeEncodeScaleFP4(
     // for E4M3, the smallest value is 0.f, avoid overflow of encode scale
     // NOTE: This is written in a weird way to match with the implementation of
     // psx-formats.
-    return fminf(
-        1.0f / (static_cast<float>(decode_scale) * global_decode_scale),
-        HighPrecisionFloatScaleLimitsTrait<float, false>::max);
+    return fminf(1.0f / (static_cast<float>(decode_scale) * global_decode_scale),
+                 HighPrecisionFloatScaleLimitsTrait<float, false>::max);
   }
 }
 
