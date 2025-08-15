@@ -8,6 +8,15 @@ import triton
 import triton.language as tl
 
 
+@triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 256}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 256, "BLOCK_N": 128}, num_warps=8, num_stages=2),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 256}, num_warps=8, num_stages=1),
+    ],
+    key=["out_dim0", "out_dim1"],
+)
 @triton.jit
 def zero_pad_kernel(
     inp_ptr,
@@ -73,9 +82,5 @@ def pad_columnwise_scale_inv(inp: torch.Tensor) -> torch.Tensor:
         in_s1,
         out_s0,
         out_s1,
-        BLOCK_M=BLOCK_M,
-        BLOCK_N=BLOCK_N,
-        num_warps=4,
-        num_stages=2,
     )
     return out
