@@ -35,6 +35,13 @@ class GetRecipes:
         return NVFP4BlockScaling()
 
 
+def unpack_fp4(x: torch.Tensor) -> torch.Tensor:
+    repeated = x.repeat_interleave(2, dim=1)
+    repeated[:, 0::2] &= 0x0F
+    repeated[:, 1::2] >>= 4
+    return repeated
+
+
 def check_quantization_nvfp4_versus_reference(
     x_dtype: torch.dtype,
     M: int,
@@ -97,15 +104,24 @@ def check_quantization_nvfp4_versus_reference(
     x_nvfp4_ref = ref_quantizer.quantize(x)
 
     # Extract data from RefNVFP4Tensor
-    qx_ref = x_nvfp4_ref.data.view(dtype=torch.uint8) if x_nvfp4_ref.data is not None else None
+    qx_ref = (
+        unpack_fp4(x_nvfp4_ref.data.view(dtype=torch.uint8))
+        if x_nvfp4_ref.data is not None
+        else None
+    )
     sx_ref = x_nvfp4_ref.scale.view(dtype=torch.uint8) if x_nvfp4_ref.scale is not None else None
     qx_t_ref = (
-        x_nvfp4_ref.data_t.view(dtype=torch.uint8) if x_nvfp4_ref.data_t is not None else None
+        unpack_fp4(x_nvfp4_ref.data_t.view(dtype=torch.uint8))
+        if x_nvfp4_ref.data_t is not None
+        else None
     )
     sx_t_ref = (
         x_nvfp4_ref.scale_t.view(dtype=torch.uint8) if x_nvfp4_ref.scale_t is not None else None
     )
     ref_amax = x_nvfp4_ref.global_amax
+
+    qx = unpack_fp4(qx)
+    qx_t = unpack_fp4(qx_t) if qx_t is not None else None
 
     torch.testing.assert_close(qx, qx_ref, atol=0.0, rtol=0.0)
 
@@ -278,6 +294,7 @@ def test_nvfp4_quantization_extrema_versus_reference(
     "M, N",
     [
         (16, 128),
+        (32, 128),
     ],
 )
 @pytest.mark.parametrize("x_dtype", [torch.float32, torch.bfloat16], ids=str)

@@ -98,13 +98,12 @@ void CheckScaleTensorShape(const Tensor &t, const std::string &name) {
     }
   } else {
     if (t.scaling_mode == NVTE_MXFP8_1D_SCALING ||
-        t.scaling_mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING ||
-        t.scaling_mode == NVTE_NVFP4_1D_SCALING) {
+        t.scaling_mode == NVTE_HYBRID_NVFP4_MXFP8_SCALING) {
       // Need (4, 128) alignment even for e8 scaling factor
       auto block_alignment = std::vector<size_t>{128ul, 4ul};
       size_t expected_x, expected_y, alignment;
       const size_t block_size_rowwise = (t.scaling_mode == NVTE_MXFP8_1D_SCALING) ? 32 : 16;
-      const size_t block_size_colwise = (t.scaling_mode == NVTE_NVFP4_1D_SCALING) ? 16 : 32;
+      const size_t block_size_colwise = 32;
 
       if (t.has_data()) {
         alignment = block_alignment[0];
@@ -141,6 +140,23 @@ void CheckScaleTensorShape(const Tensor &t, const std::string &name) {
               alignment;
         }
         const auto &expected = std::vector<size_t>{expected_x, expected_y};
+        NVTE_CHECK(t.columnwise_scale_inv.shape == expected, "Tensor \"", name,
+                   "\"  has invalid columnwise_scale_inv shape (expected ", expected, ", got ",
+                   t.columnwise_scale_inv.shape, ")");
+      }
+    } else if (t.scaling_mode == NVTE_NVFP4_1D_SCALING) {
+      if (t.has_data()) {
+        const size_t expected_y = DIVUP_TO_MULTIPLE(t.flat_first_dim(), 128);
+        const size_t expected_x = DIVUP_TO_MULTIPLE(DIVUP(t.flat_last_dim(), 16lu), 4);
+        const auto &expected = std::vector<size_t>{expected_y, expected_x};
+        NVTE_CHECK(t.scale_inv.shape == expected, "Tensor \"", name,
+                   "\" has invalid scale_inv shape (expected ", expected, ", got ",
+                   t.scale_inv.shape, ")");
+      }
+      if (t.has_columnwise_data()) {
+        const size_t expected_y = DIVUP_TO_MULTIPLE(t.flat_last_dim(), 128);
+        const size_t expected_x = DIVUP_TO_MULTIPLE(DIVUP(t.flat_first_dim(), 16lu), 4);
+        const auto &expected = std::vector<size_t>{expected_y, expected_x};
         NVTE_CHECK(t.columnwise_scale_inv.shape == expected, "Tensor \"", name,
                    "\"  has invalid columnwise_scale_inv shape (expected ", expected, ", got ",
                    t.columnwise_scale_inv.shape, ")");
@@ -234,32 +250,28 @@ void CheckOutputTensor(const Tensor &t, const std::string &name, bool allow_empt
                  to_string(t.columnwise_scale_inv.dtype), ")");
     }
   } else if (is_fp4_dtype(type)) {
-    // TODO(zhongbo): add more checks for NVFP4 1D scaling
-    // FP4 output needs to have scale, scale_inv and amax
-    if (t.scaling_mode == NVTE_NVFP4_1D_SCALING && t.amax.dptr != nullptr) {
-      NVTE_CHECK(t.amax.dtype == DType::kFloat32, "Invalid amax dtype (expected ",
-                 to_string(DType::kFloat32), ", got ", to_string(t.amax.dtype), ")");
-      NVTE_CHECK(product(t.amax.shape) == 1, "Invalid shape of amax in output ", name,
-                 " (expected 1 entry, got shape=", t.amax.shape, ")");
-    }
+    // FP4 output needs to have the scale_inv
     if (t.has_data()) {
       NVTE_CHECK(t.scale_inv.dptr != nullptr, "FP4 scaling factor output ", name,
                  "_scale_inverse must be allocated");
       NVTE_CHECK(t.scale_inv.dtype == DType::kFloat8E4M3, "FP4 scaling factor output ", name,
-                 "_scale_inverse has invalid dtype (expected Float8E4M3, got ",
+                 "_scale_inverse has invalid dtype "
+                 "(expected Float8E4M3, got ",
                  to_string(t.scale_inv.dtype), ")");
     }
     if (t.has_columnwise_data()) {
       NVTE_CHECK(t.columnwise_scale_inv.dptr != nullptr, "FP4 scaling factor output ", name,
                  "_columnwise_scale_inverse must be allocated");
       NVTE_CHECK(t.columnwise_scale_inv.dtype == DType::kFloat8E4M3, "FP4 scaling factor output ",
-                 name, "_columnwise_scale_inverse has invalid dtype (expected Float8E4M3, got ",
+                 name,
+                 "_columnwise_scale_inverse has invalid dtype "
+                 "(expected Float8E4M3, got ",
                  to_string(t.columnwise_scale_inv.dtype), ")");
     }
   } else {
     NVTE_CHECK(t.scale.dptr == nullptr, "Scale is not supported for non-FP8 output ", name);
-    // Note: amax is supported for non-FP8 output as it can be fused into the computation
-    //       and later used for quantization with no need to compute it separately
+    // Unfused quant with level 2 nvfp4 scaling will produce high precision tensors with amax.
+    // NVTE_CHECK(t.amax.dptr == nullptr, "Amax is not supported for non-FP8 output ", name);
     NVTE_CHECK(t.scale_inv.dptr == nullptr, "Scale_inv is not supported for non-FP8 output ", name);
     NVTE_CHECK(t.columnwise_scale_inv.dptr == nullptr,
                "Scale_inv is not supported for non-FP8 input ", name);
@@ -694,6 +706,12 @@ void nvte_set_quantization_config_attribute(NVTEQuantizationConfig config,
       break;
     case kNVTEQuantizationConfigFloat8BlockScaleTensorFormat:
       std::memcpy(&config_.float8_block_scale_tensor_format, buf, attr_size);
+      break;
+    case kNVTEQuantizationConfigRNGSeed:
+      std::memcpy(&config_.rng_seed, buf, attr_size);
+      break;
+    case kNVTEQuantizationConfigRNGSequence:
+      std::memcpy(&config_.rng_sequence, buf, attr_size);
       break;
     default:
       NVTE_ERROR("Unsupported NVTEQuantizationConfigAttribute (got ", static_cast<int>(attr), ")");
