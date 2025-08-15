@@ -127,18 +127,6 @@ void CheckScaleTensorShape(const Tensor &t, const std::string &name) {
         alignment = block_alignment[0];
         expected_y = DIVUP(DIVUP(t.flat_last_dim(), static_cast<size_t>(1)), alignment) * alignment;
 
-        if (t.scaling_mode == NVTE_NVFP4_1D_SCALING) {
-          // t.shape() will give the orignal high precision tensor shape
-          // suppose shape is 4096x128, then its columnwise scale is equivalent
-          // to doing 1x16 scaling to 128x4096 tensor
-          alignment = block_alignment[0];
-          expected_x =
-              DIVUP(DIVUP(t.flat_last_dim(), static_cast<size_t>(1)), alignment) * alignment;
-          alignment = block_alignment[1];
-          expected_y =
-              DIVUP(DIVUP(t.flat_first_dim(), static_cast<size_t>(block_size_colwise)), alignment) *
-              alignment;
-        }
         const auto &expected = std::vector<size_t>{expected_x, expected_y};
         NVTE_CHECK(t.columnwise_scale_inv.shape == expected, "Tensor \"", name,
                    "\"  has invalid columnwise_scale_inv shape (expected ", expected, ", got ",
