@@ -16,13 +16,12 @@ namespace nvfp4_recipe {
 
 constexpr float factor = 6.0 * 6.0 * 448.0 * 448.0;
 
-// single thread kernel that takes in two amax pointers, calculate the following
-// alpha = amax_A * amax_B / factor
-// Kernel to compute alpha = amax_A * amax_B / factor
-__global__ void compute_nvfp4_per_tensor_scale_kernel(const float *amax_A, const float *amax_B,
-                                                      float *alpha_ptr) {
+// Kernel to compute alpha *= amax_A * amax_B / factor
+__global__ void compute_nvfp4_per_tensor_scale_kernel(float alpha_in,
+                                                      const float *amax_A, const float *amax_B,
+                                                      float *alpha_out) {
   // factor is defined in the enclosing namespace
-  *alpha_ptr = (*amax_A) * (*amax_B) / factor;
+  *alpha_out = alpha_in * (*amax_A) * (*amax_B) / factor;
 }
 
 }  // namespace nvfp4_recipe
@@ -30,7 +29,8 @@ __global__ void compute_nvfp4_per_tensor_scale_kernel(const float *amax_A, const
 
 void nvte_nvfp4_compute_per_tensor_scale(const NVTETensor inpA, const bool use_rowwise_amax_A,
                                          const NVTETensor inpB, const bool use_rowwise_amax_B,
-                                         NVTETensor alpha_out, cudaStream_t stream) {
+                                         float alpha_in, NVTETensor alpha_out,
+                                         cudaStream_t stream) {
   NVTE_API_CALL(nvte_nvfp4_compute_per_tensor_scale);
   using namespace transformer_engine;
 
@@ -48,6 +48,7 @@ void nvte_nvfp4_compute_per_tensor_scale(const NVTETensor inpA, const bool use_r
   NVTE_CHECK(alpha_ptr != nullptr, "alpha_ptr is null");
 
   nvfp4_recipe::compute_nvfp4_per_tensor_scale_kernel<<<1, 1, 0, stream>>>(
+      alpha_in,
       reinterpret_cast<const float *>(amax_A_ptr), reinterpret_cast<const float *>(amax_B_ptr),
       reinterpret_cast<float *>(alpha_ptr));
   NVTE_CHECK_CUDA(cudaGetLastError());

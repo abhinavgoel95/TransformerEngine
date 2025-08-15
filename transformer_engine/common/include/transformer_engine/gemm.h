@@ -20,9 +20,9 @@ extern "C" {
 /*! \brief Compute matrix multiplication of 2 matrices, potentially fused with other operations.
  *
  * Computes:
- *  - `D = AB` if both `bias` and `pre_gelu_out` are empty tensors
- *  - `D = AB + bias` if `pre_gelu_out` is empty and `bias` is not empty
- *  - `D = GELU(AB + bias)` if both `bias` and `pre_gelu_out` are not empty tensors
+ *  - `D = alpha * A * B + beta * D` if both `bias` and `pre_gelu_out` are empty tensors
+ *  - `D = alpha * A * B + beta * D + bias` if `pre_gelu_out` is empty and `bias` is not empty
+ *  - `D = GELU(alpha * A * B + beta * D + bias)` if both `bias` and `pre_gelu_out` are not empty tensors
  *
  *  \param[in]     A                     The A matrix.
  *  \param[in]     B                     The B matrix.
@@ -31,18 +31,19 @@ extern "C" {
  *  \param[in,out] pre_gelu_out          Output matrix before GELU activation.
  *  \param[in]     transa                Whether A matrix is transposed.
  *  \param[in]     transb                Whether B matrix is transposed.
+ *  \param[in]     alpha                 Scaling factor to apply to matrix product.
+ *  \param[in]     beta                  Scaling factor to apply to output matrix.
  *  \param[in]     grad                  Whether this operation is part of the
  *                                       gradient computation.
  *  \param[out]    workspace             Workspace tensor.
- *  \param[in]     alpha                 Scaling factor for the output, can be used for nvfp4 gemm
- *  \param[in]     accumulate            Whether to accumulate the result into the D matrix.
+ *  \param[in]     alpha_workspace       Workspace tensor for NVFP4 alpha scale.
  *  \param[in]     use_split_accumulator Whether to use split accumulator in the FP8 GEMM.
  *  \param[in]     math_sm_count         Number of GPU SMs to use (default=0: use cuBLAS heuristics)
  *  \param[in]     stream                CUDA stream used for the operation.
  */
 void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, const NVTETensor bias,
-                      NVTETensor pre_gelu_out, bool transa, bool transb, bool grad,
-                      NVTETensor workspace, NVTETensor alpha, bool accumulate,
+                      NVTETensor pre_gelu_out, bool transa, bool transb, float alpha, float beta,
+                      bool grad, NVTETensor workspace, NVTETensor alpha_workspace,
                       bool use_split_accumulator, int math_sm_count, cudaStream_t stream);
 
 /*! \brief Compute matrix multiplication of 2 matrices with chunking and atomic counters.
@@ -64,7 +65,6 @@ void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, cons
  *  \param[in]     grad                  Whether this operation is part of the
  *                                       gradient computation.
  *  \param[out]    workspace             Workspace tensor.
- *  \param[in]     alpha                 Scaling factor for the output, can be used for nvfp4 gemm
  *  \param[in]     accumulate            Whether to accumulate the result into the D matrix.
  *  \param[in]     use_split_accumulator Whether to use split accumulator in the FP8 GEMM.
  *  \param[in]     math_sm_count         Number of GPU SMs to use (default=0: use cuBLAS heuristics)
@@ -76,7 +76,7 @@ void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, cons
  */
 void nvte_cublas_atomic_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D,
                              const NVTETensor bias, NVTETensor pre_gelu_out, bool transa,
-                             bool transb, bool grad, NVTETensor workspace, NVTETensor alpha,
+                             bool transb, bool grad, NVTETensor workspace,
                              bool accumulate, bool use_split_accumulator, int math_sm_count,
                              int m_split, int n_split, bool gemm_producer, const NVTETensor counter,
                              cudaStream_t stream);
@@ -100,7 +100,6 @@ void nvte_cublas_atomic_gemm(const NVTETensor A, const NVTETensor B, NVTETensor 
  *  \param[in]     grad                  Whether this operation is part of the
  *                                       gradient computation.
  *  \param[out]    workspace             List of workspace tensors.
- *  \param[in]     alpha                 Scaling factor for the output, can be used for nvfp4 gemm
  *  \param[in]     accumulate            Whether to accumulate the result into the D matrix.
  *  \param[in]     use_split_accumulator Whether to use split accumulator in the FP8 GEMM.
  *  \param[in]     math_sm_count         Number of GPU SMs to use (default=0: use cuBLAS heuristics)
@@ -109,7 +108,7 @@ void nvte_cublas_atomic_gemm(const NVTETensor A, const NVTETensor B, NVTETensor 
 void nvte_multi_stream_cublas_gemm(const NVTETensor* A, const NVTETensor* B, NVTETensor* D,
                                    const NVTETensor* bias, NVTETensor* pre_gelu_out,
                                    const int num_gemms, bool transa, bool transb, bool grad,
-                                   NVTETensor* workspace, NVTETensor* alpha, bool accumulate,
+                                   NVTETensor* workspace, bool accumulate,
                                    bool use_split_accumulator, int math_sm_count,
                                    cudaStream_t stream);
 #ifdef __cplusplus
