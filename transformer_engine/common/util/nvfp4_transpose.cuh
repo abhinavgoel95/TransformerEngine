@@ -166,6 +166,9 @@ __device__ __forceinline__ fp4e2m1x4 mul_cvt_bf16_to_fp4_4x_with_stochastic_roun
       "}"
       : "=h"(out_4x)
       : "l"(in_4x), "l"(reinterpret_cast<const uint64_t &>(scale)), "r"(rbits));
+#else
+#error \
+    "CUDA_ARCH_HAS_CVT_FEATURE is required for mul_cvt_bf16_to_fp4_4x_with_stochastic_rounding, please specify NVTE_CUDA_ARCHS=100a"
 #endif
   return *reinterpret_cast<fp4e2m1x4 *>(&out_4x);
 }
@@ -209,6 +212,9 @@ __device__ __forceinline__ fp4e2m1x4 mul_cvt_bf16_to_fp4_4x_with_rn(const uint64
       "}"
       : "=r"(out_4x)
       : "l"(in_4x), "l"(reinterpret_cast<const uint64_t &>(scale)));
+#else
+#error \
+    "CUDA_ARCH_HAS_CVT_FEATURE is required for mul_cvt_bf16_to_fp4_4x_with_rn, please specify NVTE_CUDA_ARCHS=100a"
 #endif
   return reinterpret_cast<fp4e2m1x4 *>(&out_4x)[0];
 }
