@@ -393,6 +393,7 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
             return NVFP4Tensor(
                 shape=out_shape,
                 dtype=tensor.dtype,
+                fp4_dtype=tensor._fp4_dtype,
                 rowwise_data=out_data,
                 rowwise_scale_inv=tensor._rowwise_scale_inv,
                 columnwise_data=tensor._columnwise_data,
@@ -401,6 +402,42 @@ class NVFP4Tensor(NVFP4TensorBase, QuantizedTensor):
                 amax_columnwise=tensor._amax_columnwise,
                 quantizer=tensor._quantizer,
                 requires_grad=False,
+            )
+
+        # NVFP4 dequantize not supported. Add manual support for needed funcs.
+        if func == aten.empty_like.default or func == aten.zero_.default:
+            tensor = args[0]
+            data_init_func = torch.zeros_like if func == aten.zero_.default else torch.empty_like
+            scale_inv_init_func = (
+                torch.ones_like if func == aten.zero_.default else torch.empty_like
+            )
+
+            if tensor._rowwise_data is not None:
+                rowwise_data = data_init_func(tensor._rowwise_data)
+                rowwise_scale_inv = scale_inv_init_func(tensor._rowwise_scale_inv)
+                amax_rowwise = torch.zeros_like(tensor._amax_rowwise)
+            else:
+                rowwise_data, rowwise_scale_inv, amax_rowwise = None, None, None
+
+            if tensor._columnwise_data is not None:
+                columnwise_data = data_init_func(tensor._columnwise_data)
+                columnwise_scale_inv = scale_inv_init_func(tensor._columnwise_scale_inv)
+                amax_columnwise = torch.zeros_like(tensor._amax_columnwise)
+            else:
+                columnwise_data, columnwise_scale_inv, amax_columnwise = None, None, None
+
+            return NVFP4Tensor(
+                shape=tensor.shape,
+                dtype=tensor.dtype,
+                fp4_dtype=tensor._fp4_dtype,
+                rowwise_data=rowwise_data,
+                rowwise_scale_inv=rowwise_scale_inv,
+                columnwise_data=columnwise_data,
+                columnwise_scale_inv=columnwise_scale_inv,
+                amax_rowwise=amax_rowwise,
+                amax_columnwise=amax_columnwise,
+                quantizer=tensor._quantizer,
+                requires_grad=tensor.requires_grad,
             )
 
         # Default case

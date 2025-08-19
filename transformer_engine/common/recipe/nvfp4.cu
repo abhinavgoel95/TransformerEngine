@@ -17,9 +17,8 @@ namespace nvfp4_recipe {
 constexpr float factor = 6.0 * 6.0 * 448.0 * 448.0;
 
 // Kernel to compute alpha *= amax_A * amax_B / factor
-__global__ void compute_nvfp4_per_tensor_scale_kernel(float alpha_in,
-                                                      const float *amax_A, const float *amax_B,
-                                                      float *alpha_out) {
+__global__ void compute_nvfp4_per_tensor_scale_kernel(float alpha_in, const float *amax_A,
+                                                      const float *amax_B, float *alpha_out) {
   // factor is defined in the enclosing namespace
   *alpha_out = alpha_in * (*amax_A) * (*amax_B) / factor;
 }
@@ -48,8 +47,7 @@ void nvte_nvfp4_compute_per_tensor_scale(const NVTETensor inpA, const bool use_r
   NVTE_CHECK(alpha_ptr != nullptr, "alpha_ptr is null");
 
   nvfp4_recipe::compute_nvfp4_per_tensor_scale_kernel<<<1, 1, 0, stream>>>(
-      alpha_in,
-      reinterpret_cast<const float *>(amax_A_ptr), reinterpret_cast<const float *>(amax_B_ptr),
-      reinterpret_cast<float *>(alpha_ptr));
+      alpha_in, reinterpret_cast<const float *>(amax_A_ptr),
+      reinterpret_cast<const float *>(amax_B_ptr), reinterpret_cast<float *>(alpha_ptr));
   NVTE_CHECK_CUDA(cudaGetLastError());
 }

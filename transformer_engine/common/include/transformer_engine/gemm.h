@@ -76,9 +76,9 @@ void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, cons
  */
 void nvte_cublas_atomic_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D,
                              const NVTETensor bias, NVTETensor pre_gelu_out, bool transa,
-                             bool transb, bool grad, NVTETensor workspace,
-                             bool accumulate, bool use_split_accumulator, int math_sm_count,
-                             int m_split, int n_split, bool gemm_producer, const NVTETensor counter,
+                             bool transb, bool grad, NVTETensor workspace, bool accumulate,
+                             bool use_split_accumulator, int math_sm_count, int m_split,
+                             int n_split, bool gemm_producer, const NVTETensor counter,
                              cudaStream_t stream);
 
 /*! \brief Compute multiple pairs of matrix multiplication, potentially fused with other operations,

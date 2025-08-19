@@ -306,9 +306,9 @@ using cublasHandleManager = detail::HandleManager<cublasLtHandle_t, CreateCublas
 void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
                  const Tensor *inputBias, Tensor *outputPreGelu, cublasOperation_t transa,
                  cublasOperation_t transb, bool grad, void *workspace, size_t workspaceSize,
-                 const void *alpha, const void *beta, bool use_split_accumulator,
-                 int math_sm_count, int m_split, int n_split, bool gemm_producer,
-                 const Tensor *inputCounter, cudaStream_t stream) {
+                 const void *alpha, const void *beta, bool use_split_accumulator, int math_sm_count,
+                 int m_split, int n_split, bool gemm_producer, const Tensor *inputCounter,
+                 cudaStream_t stream) {
   // Tensor dims in row-major order
   const int A0 = inputA->flat_first_dim();
   const int A1 = inputA->flat_last_dim();
@@ -683,15 +683,15 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
   if (returnedResults == 0) NVTE_ERROR("Unable to find any suitable algorithms");
 
   // D = alpha * (A * B) + beta * C
-  NVTE_CHECK_CUBLAS(cublasLtMatmul(handle, operationDesc, alpha,     /* alpha */
-                                   param.A,                          /* A */
-                                   Adesc, param.B,                   /* B */
-                                   Bdesc, beta,                      /* beta */
-                                   C,                                /* C */
-                                   Cdesc, D,                         /* D */
-                                   Ddesc, &heuristicResult.algo,     /* algo */
-                                   workspace,                        /* workspace */
-                                   workspaceSize, stream));          /* stream */
+  NVTE_CHECK_CUBLAS(cublasLtMatmul(handle, operationDesc, alpha, /* alpha */
+                                   param.A,                      /* A */
+                                   Adesc, param.B,               /* B */
+                                   Bdesc, beta,                  /* beta */
+                                   C,                            /* C */
+                                   Cdesc, D,                     /* D */
+                                   Ddesc, &heuristicResult.algo, /* algo */
+                                   workspace,                    /* workspace */
+                                   workspaceSize, stream));      /* stream */
 
   // Update FP8 scale-inv in output tensor
   // Note: This is a WAR for the case when we have fp8 output but D->scale_inv is not allocated.
@@ -712,9 +712,8 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
 }  // namespace transformer_engine
 
 void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, const NVTETensor bias,
-                      NVTETensor pre_gelu_out, bool transa, bool transb,
-                      float alpha, float beta, bool grad,
-                      NVTETensor workspace, NVTETensor alpha_workspace,
+                      NVTETensor pre_gelu_out, bool transa, bool transb, float alpha, float beta,
+                      bool grad, NVTETensor workspace, NVTETensor alpha_workspace,
                       bool use_split_accumulator, int math_sm_count, cudaStream_t stream) {
   NVTE_API_CALL(nvte_cublas_gemm);
   using namespace transformer_engine;
@@ -750,9 +749,9 @@ void nvte_cublas_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D, cons
 
 void nvte_cublas_atomic_gemm(const NVTETensor A, const NVTETensor B, NVTETensor D,
                              const NVTETensor bias, NVTETensor pre_gelu_out, bool transa,
-                             bool transb, bool grad, NVTETensor workspace,
-                             bool accumulate, bool use_split_accumulator, int math_sm_count,
-                             int m_split, int n_split, bool gemm_producer, const NVTETensor counter,
+                             bool transb, bool grad, NVTETensor workspace, bool accumulate,
+                             bool use_split_accumulator, int math_sm_count, int m_split,
+                             int n_split, bool gemm_producer, const NVTETensor counter,
                              cudaStream_t stream) {
   NVTE_API_CALL(nvte_cublas_atomic_gemm);
   using namespace transformer_engine;
@@ -815,9 +814,9 @@ void nvte_multi_stream_cublas_gemm(const NVTETensor *A, const NVTETensor *B, NVT
 
   for (int i = 0; i < num_gemms; i++) {
     nvte_cublas_gemm(A[i], B[i], D[i], bias[i], pre_gelu_out[i], transa, transb, 1.f,
-                     accumulate ? 1.f : 0.f, grad,
-                     workspace[i % num_streams], nullptr, use_split_accumulator,
-                     math_sm_count, detail::get_compute_stream(i % num_streams));
+                     accumulate ? 1.f : 0.f, grad, workspace[i % num_streams], nullptr,
+                     use_split_accumulator, math_sm_count,
+                     detail::get_compute_stream(i % num_streams));
   }
 
   // record events on compute streams

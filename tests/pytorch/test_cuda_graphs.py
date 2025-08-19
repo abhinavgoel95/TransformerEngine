@@ -38,6 +38,7 @@ model_configs = {
 fp8_recipes = []
 if mxfp8_available:
     fp8_recipes.append(recipe.MXFP8BlockScaling())
+    fp8_recipes.append(recipe.NVFP4BlockScaling())
 if fp8_block_scaling_available:
     fp8_recipes.append(recipe.Float8BlockScaling())
 if fp8_available:
@@ -297,6 +298,10 @@ def test_make_graphed_callables(
         pytest.skip("FP8 needed for FP8 parameters.")
     if fp8 and fp8_recipe.float8_block_scaling() and module == "linear_op":
         pytest.skip("Module not yet supported for float8_block_scaling with CUDA graphs")
+    if fp8 and (fp8_recipe.hybrid_nvfp4() or fp8_recipe.nvfp4()) and dtype == torch.float16:
+        pytest.skip("FP16 output for NVFP4 not supported")
+    if fp8 and (fp8_recipe.hybrid_nvfp4() or fp8_recipe.nvfp4()) and fp8_params:
+        pytest.skip("NVFP4 params not supported")
 
     # Run model with different CUDA graph settings.
     model_config = model_configs[model_config]

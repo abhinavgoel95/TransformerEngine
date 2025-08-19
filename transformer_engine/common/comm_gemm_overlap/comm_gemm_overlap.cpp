@@ -786,8 +786,8 @@ void CommOverlapP2PBase::atomic_gemm_overlap_ag(
     if (i == 0) {
       nvte_cublas_atomic_gemm(A.data(), input_b.data(), D_buffer.data(), bias.data(),
                               pre_gelu_out.data(), transa, transb, grad, workspace_chunk.data(),
-                              accumulate, use_split_accumulator, _math_sms, 0, _tp_size,
-                              false, _counter.data(), stream_main);
+                              accumulate, use_split_accumulator, _math_sms, 0, _tp_size, false,
+                              _counter.data(), stream_main);
     }
   }
 
@@ -1012,9 +1012,8 @@ void CommOverlapP2PBase::atomic_gemm_overlap_rs(
   // Process GEMM chunks in the order that AG+GEMM places the output chunks.
   auto output_d = get_buffer_chunk_like(D, 0, shape_to_vector(D.shape()));
   nvte_cublas_atomic_gemm(A.data(), B.data(), output_d.data(), bias.data(), pre_gelu_out.data(),
-                          transa, transb, grad, workspace.data(), accumulate,
-                          use_split_accumulator, _math_sms, 0, _tp_size, true, _counter.data(),
-                          stream_main);
+                          transa, transb, grad, workspace.data(), accumulate, use_split_accumulator,
+                          _math_sms, 0, _tp_size, true, _counter.data(), stream_main);
 
   // P2P communication chunk
   for (int i = 1; i < _tp_size; i++) {

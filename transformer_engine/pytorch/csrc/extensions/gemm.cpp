@@ -342,9 +342,8 @@ void te_atomic_gemm(at::Tensor A, at::Tensor A_scale_inverse, DType A_type,
   NVTE_SCOPED_GIL_RELEASE({
     nvte_cublas_atomic_gemm(te_A.data(), te_B.data(), te_D.data(), te_bias.data(),
                             te_pre_gelu_out.data(), transa, transb, grad, te_workspace.data(),
-                            accumulate, use_split_accumulator, math_sm_count, m_split,
-                            n_split, gemm_producer, te_counter.data(),
-                            at::cuda::getCurrentCUDAStream());
+                            accumulate, use_split_accumulator, math_sm_count, m_split, n_split,
+                            gemm_producer, te_counter.data(), at::cuda::getCurrentCUDAStream());
   });
 }
 
@@ -464,11 +463,11 @@ std::optional<std::vector<at::Tensor>> te_general_grouped_gemm(
 
   // For now, we only have multi-stream cublas backend.
   NVTE_SCOPED_GIL_RELEASE({
-    nvte_multi_stream_cublas_gemm(
-        te_A_vector.data(), te_B_vector.data(), te_D_vector.data(), te_bias_vector.data(),
-        te_pre_gelu_out_vector.data(), te_A_vector.size(), transa, transb, grad,
-        te_workspace_vector.data(), accumulate, use_split_accumulator, math_sm_count,
-        at::cuda::getCurrentCUDAStream());
+    nvte_multi_stream_cublas_gemm(te_A_vector.data(), te_B_vector.data(), te_D_vector.data(),
+                                  te_bias_vector.data(), te_pre_gelu_out_vector.data(),
+                                  te_A_vector.size(), transa, transb, grad,
+                                  te_workspace_vector.data(), accumulate, use_split_accumulator,
+                                  math_sm_count, at::cuda::getCurrentCUDAStream());
   });
   return bias;
 }

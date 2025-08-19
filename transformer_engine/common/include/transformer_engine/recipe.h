@@ -109,8 +109,7 @@ void nvte_fp8_block_scaling_partial_cast(const NVTETensor inp, NVTETensor out,
 
 void nvte_nvfp4_compute_per_tensor_scale(const NVTETensor inpA, const bool use_rowwise_amax_A,
                                          const NVTETensor inpB, const bool use_rowwise_amax_B,
-                                         float alpha_in, NVTETensor alpha_out,
-                                         cudaStream_t stream);
+                                         float alpha_in, NVTETensor alpha_out, cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"
