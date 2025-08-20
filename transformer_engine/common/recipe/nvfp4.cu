@@ -14,13 +14,14 @@
 namespace transformer_engine {
 namespace nvfp4_recipe {
 
-constexpr float factor = 6.0 * 6.0 * 448.0 * 448.0;
+// constexpr float factor = 6.0 * 6.0 * 448.0 * 448.0;
+constexpr float factor_inv = 1.0 / (6.0 * 6.0 * 448.0 * 448.0);
 
 // Kernel to compute alpha *= amax_A * amax_B / factor
 __global__ void compute_nvfp4_per_tensor_scale_kernel(float alpha_in, const float *amax_A,
                                                       const float *amax_B, float *alpha_out) {
   // factor is defined in the enclosing namespace
-  *alpha_out = alpha_in * (*amax_A) * (*amax_B) / factor;
+  *alpha_out = alpha_in * (*amax_A) * (*amax_B) * factor_inv;
 }
 
 }  // namespace nvfp4_recipe

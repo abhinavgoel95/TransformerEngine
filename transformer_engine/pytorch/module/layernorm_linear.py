@@ -191,12 +191,13 @@ class _LayerNormLinear(torch.autograd.Function):
 
         # Avoid quantized norm kernel if norm output will be returned
         # or if a gather of ln_out must be in high precision.
+        experimental = is_experimental(input_quantizer)
         with_quantized_norm = (
             fp8
             and not debug
             and not return_layernorm_output
             and not return_layernorm_output_gathered
-            and not is_experimental(input_quantizer)
+            and not experimental
         )
 
         # Apply normalization
@@ -242,7 +243,8 @@ class _LayerNormLinear(torch.autograd.Function):
                 quantizer = None
                 if fp8 or debug:
                     quantizer = input_quantizer
-                    if not with_quantized_norm:
+                    # experimental recipe doesn't need to support quantized AG
+                    if not with_quantized_norm and not experimental:
                         ln_out = quantizer(ln_out)
                     quantizer.set_usage(rowwise=True, columnwise=False)
                 if ub_overlap_ag_fprop:  # Initialize Userbuffers all-gather

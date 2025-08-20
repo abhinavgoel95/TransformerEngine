@@ -190,8 +190,8 @@ def check_nvfp4_module_versus_reference(
         torch.testing.assert_close(
             native_out["output"],
             ref_out["output"],
-            atol=1e-2,
-            rtol=1e-2,
+            atol=1e-6,
+            rtol=1e-6,
             msg=f"Output mismatch at step {step}",
         )
 
@@ -199,8 +199,8 @@ def check_nvfp4_module_versus_reference(
         torch.testing.assert_close(
             native_out["input_grad"],
             ref_out["input_grad"],
-            atol=1e-2,
-            rtol=1e-2,
+            atol=1e-6,
+            rtol=1e-6,
             msg=f"Input gradient mismatch at step {step}",
         )
 
@@ -208,8 +208,8 @@ def check_nvfp4_module_versus_reference(
         torch.testing.assert_close(
             native_out["weight_grad"],
             ref_out["weight_grad"],
-            atol=1e-2,
-            rtol=1e-2,
+            atol=1e-6,
+            rtol=1e-6,
             msg=f"Weight gradient mismatch at step {step}",
         )
 
@@ -218,8 +218,8 @@ def check_nvfp4_module_versus_reference(
             torch.testing.assert_close(
                 native_out["bias_grad"],
                 ref_out["bias_grad"],
-                atol=1e-2,
-                rtol=1e-2,
+                atol=1e-6,
+                rtol=1e-6,
                 msg=f"Bias gradient mismatch at step {step}",
             )
 
@@ -388,31 +388,31 @@ def check_nvfp4_layernorm_linear_versus_reference(
         n = native_outputs[step]
         r = ref_outputs[step]
         torch.testing.assert_close(
-            n["output"], r["output"], atol=1e-2, rtol=1e-2, msg=f"Output mismatch at step {step}"
+            n["output"], r["output"], atol=1e-6, rtol=1e-6, msg=f"Output mismatch at step {step}"
         )
         torch.testing.assert_close(
-            n["ln_out"], r["ln_out"], atol=1e-2, rtol=1e-2, msg=f"LN output mismatch at step {step}"
+            n["ln_out"], r["ln_out"], atol=1e-6, rtol=1e-6, msg=f"LN output mismatch at step {step}"
         )
         torch.testing.assert_close(
             n["input_grad"],
             r["input_grad"],
-            atol=1e-2,
-            rtol=1e-2,
+            atol=1e-6,
+            rtol=1e-6,
             msg=f"Input gradient mismatch at step {step}",
         )
         torch.testing.assert_close(
             n["weight_grad"],
             r["weight_grad"],
-            atol=1e-2,
-            rtol=1e-2,
+            atol=1e-6,
+            rtol=1e-6,
             msg=f"Weight gradient mismatch at step {step}",
         )
         if bias and n["bias_grad"] is not None and r["bias_grad"] is not None:
             torch.testing.assert_close(
                 n["bias_grad"],
                 r["bias_grad"],
-                atol=1e-2,
-                rtol=1e-2,
+                atol=1e-6,
+                rtol=1e-6,
                 msg=f"Bias gradient mismatch at step {step}",
             )
 
