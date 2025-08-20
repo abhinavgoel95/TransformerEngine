@@ -187,7 +187,7 @@ def check_nvfp4_gemm_versus_reference(
     y_native = torch.where(y_native.isnan(), torch.zeros_like(y_native), y_native)
 
     # Compare results with some tolerance
-    torch.testing.assert_close(y_native, y_ref, atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(y_native, y_ref, atol=0, rtol=0)
 
 
 @pytest.mark.skipif(not recipe_available, reason=reason_for_no_recipe)
