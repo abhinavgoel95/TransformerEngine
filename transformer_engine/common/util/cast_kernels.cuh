@@ -2089,9 +2089,9 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
       break;
     }
     case NVTE_NVFP4_1D_SCALING: {
-      int32_t rows = input_tensor->data.shape[0];
-      int32_t cols = input_tensor->data.shape[1];
-      auto dtype = input_tensor->data.dtype;
+      int32_t rows = input_tensor->flat_first_dim();
+      int32_t cols = input_tensor->flat_last_dim();
+      auto dtype = input_tensor->dtype();
       // TODO(Frank): Disable this fallback for perf testing.
       if (dtype == DType::kBFloat16 && rows % 32 == 0 && cols % 32 == 0) {
         nvfp4_quantize_transpose<IS_ACT, ParamOP, OP>(*input_tensor, &noop_tensor, output_tensor,
