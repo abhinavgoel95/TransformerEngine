@@ -87,11 +87,20 @@ model_configs = {
     "large": ModelConfig(2, 128, 4, 128, num_layers=1),
 }
 
+
+def nvfp4_vanilla():
+    nvfp4_recipe = recipe.NVFP4BlockScaling()
+    nvfp4_recipe.fp4_quant_fwd_inp = recipe.QParams()
+    nvfp4_recipe.fp4_quant_fwd_weight = recipe.QParams()
+    nvfp4_recipe.fp4_quant_bwd_grad = recipe.QParams()
+    return nvfp4_recipe
+
+
 fp8_recipes = []
 if mxfp8_available:
     fp8_recipes.append(recipe.MXFP8BlockScaling())
     # fp8_recipes.append(recipe.HybridNVFP4BlockScaling())  # TODO: fix check for this
-    fp8_recipes.append(recipe.NVFP4BlockScaling())  # TODO: fix check for this
+    fp8_recipes.append(nvfp4_vanilla())  # TODO: fix check for this
 if fp8_block_scaling_available:
     fp8_recipes.append(recipe.Float8BlockScaling())
 if fp8_available:

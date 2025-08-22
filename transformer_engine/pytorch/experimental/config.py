@@ -37,6 +37,7 @@ class QuantizeRecipe(enum.Enum):
 
     NON_QUANTIZE = "non_quantize"
     NVFP4_REF = "nvfp4_ref"
+    NVFP4_REF_RHT_ONLY = "nvfp4_ref_rht_only"
 
 
 def get_qlinear_params_from_predefined(
@@ -63,6 +64,27 @@ def get_qlinear_params_from_predefined(
                 pow_2_scales=False,
             ),
         )
+    elif recipe == QuantizeRecipe.NVFP4_REF_RHT_ONLY:
+        return QLinearParams(
+            x_quantizer=quantization_microblock_ref.NVFP4QuantizerRef(
+                dtype=utils.Fp4Formats.E2M1,
+                quant_tile_shape=(1, 16),
+                pow_2_scales=False,
+                with_rht=True,
+            ),
+            w_quantizer=quantization_microblock_ref.NVFP4QuantizerRef(
+                dtype=utils.Fp4Formats.E2M1,
+                quant_tile_shape=(1, 16),
+                pow_2_scales=False,
+                with_rht=False,
+            ),
+            g_quantizer=quantization_microblock_ref.NVFP4QuantizerRef(
+                dtype=utils.Fp4Formats.E2M1,
+                quant_tile_shape=(1, 16),
+                pow_2_scales=False,
+                with_rht=True,
+            ),
+        )
     else:
         raise ValueError(f"Unsupported quantize recipe: {recipe}")
 
@@ -72,6 +94,8 @@ def get_qlinear_params_from_qat_params(qat_params_idx: int) -> Optional[QLinearP
 
     if qat_params_idx == 6010:
         return get_qlinear_params_from_predefined(QuantizeRecipe.NVFP4_REF)
+    elif qat_params_idx == 960109:
+        return get_qlinear_params_from_predefined(QuantizeRecipe.NVFP4_REF_RHT_ONLY)
     raise ValueError(f"Unsupported QAT params index: {qat_params_idx}")
 
 

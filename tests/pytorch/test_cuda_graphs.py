@@ -35,10 +35,19 @@ model_configs = {
     "small": ModelConfig(32, 2, 2, 32),
 }
 
+
+def nvfp4_vanilla():
+    nvfp4_recipe = recipe.NVFP4BlockScaling()
+    nvfp4_recipe.fp4_quant_fwd_inp = recipe.QParams()
+    nvfp4_recipe.fp4_quant_fwd_weight = recipe.QParams()
+    nvfp4_recipe.fp4_quant_bwd_grad = recipe.QParams()
+    return nvfp4_recipe
+
+
 fp8_recipes = []
 if mxfp8_available:
     fp8_recipes.append(recipe.MXFP8BlockScaling())
-    fp8_recipes.append(recipe.NVFP4BlockScaling())
+    fp8_recipes.append(nvfp4_vanilla())
 if fp8_block_scaling_available:
     fp8_recipes.append(recipe.Float8BlockScaling())
 if fp8_available:
@@ -296,8 +305,14 @@ def test_make_graphed_callables(
         pytest.skip("FP8 needed for FP8 parameters.")
     if fp8_weight_caching and not fp8:
         pytest.skip("FP8 needed for FP8 parameters.")
-    if fp8 and fp8_recipe.float8_block_scaling() and module == "linear_op":
-        pytest.skip("Module not yet supported for float8_block_scaling with CUDA graphs")
+    if (
+        fp8
+        and (fp8_recipe.float8_block_scaling() or fp8_recipe.hybrid_nvfp4() or fp8_recipe.nvfp4())
+        and module == "linear_op"
+    ):
+        pytest.skip(
+            f"Module not yet supported for {fp8_recipe.__class__.__name__} with CUDA graphs"
+        )
     if fp8 and (fp8_recipe.hybrid_nvfp4() or fp8_recipe.nvfp4()) and dtype == torch.float16:
         pytest.skip("FP16 output for NVFP4 not supported")
     if fp8 and (fp8_recipe.hybrid_nvfp4() or fp8_recipe.nvfp4()) and fp8_params:

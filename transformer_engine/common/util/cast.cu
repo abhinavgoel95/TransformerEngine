@@ -17,6 +17,7 @@
 
 #include "../common.h"
 #include "../transpose/cast_transpose.h"
+#include "../util/hadamard_transform_kernels.cuh"
 #include "../util/multi_stream.h"
 #include "../util/vectorized_pointwise.h"
 #include "../utils.cuh"
@@ -68,6 +69,22 @@ void nvte_quantize_v2(const NVTETensor input, NVTETensor output,
 
   detail::quantize_helper<IS_DBIAS, IS_DACT, IS_ACT, Empty, nullptr>(
       input, grad, output, dbias, workspace, quant_config, stream);
+}
+
+void nvte_hadamard_transform(const NVTETensor input, NVTETensor output,
+                             const NVTEQuantizationConfig quant_config, cudaStream_t stream) {
+  NVTE_API_CALL(nvte_hadamard_transform);
+  using namespace transformer_engine;
+
+  detail::hadamard_transform_helper(input, output, quant_config, stream);
+}
+
+void nvte_hadamard_transform_amax(const NVTETensor input, NVTETensor output,
+                                  const NVTEQuantizationConfig quant_config, cudaStream_t stream) {
+  NVTE_API_CALL(nvte_hadamard_transform_amax);
+  using namespace transformer_engine;
+
+  detail::hadamard_transform_amax_helper(input, output, quant_config, stream);
 }
 
 void nvte_quantize_dbias(const NVTETensor input, NVTETensor output, NVTETensor dbias,

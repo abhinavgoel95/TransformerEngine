@@ -758,10 +758,11 @@ void checkCuDriverContext(CUstream stream);
 CUtensorMapDataType get_CUtensorMapDataType(DType dtype);
 
 // Set up parameters to create TMA descriptor.
-void create_2D_tensor_map(CUtensorMap &tensorMap, const SimpleTensor &tensor,
-                          const uint64_t globalY, const uint64_t globalX, const uint32_t shmemY,
-                          const uint32_t shmemX, const uint32_t stride_elems,
-                          const uint32_t offset_elems, const size_t type_num_bits);
+void create_2D_tensor_map(
+    CUtensorMap &tensorMap, const SimpleTensor &tensor, const uint64_t globalY,
+    const uint64_t globalX, const uint32_t shmemY, const uint32_t shmemX,
+    const uint32_t stride_elems, const uint32_t offset_elems, const size_t type_num_bits,
+    const CUtensorMapSwizzle swizzle = CUtensorMapSwizzle::CU_TENSOR_MAP_SWIZZLE_NONE);
 
 bool is_supported_by_CC_100();
 

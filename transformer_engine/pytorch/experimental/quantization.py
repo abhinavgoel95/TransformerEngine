@@ -64,7 +64,8 @@ class ExperimentalQuantizedTensor(QuantizedTensorBase):
     scale: Optional[torch.Tensor] = None
     data_t: Optional[torch.Tensor] = None
     scale_t: Optional[torch.Tensor] = None
-    global_amax: Optional[torch.Tensor] = None
+    global_amax_row: Optional[torch.Tensor] = None
+    global_amax_col: Optional[torch.Tensor] = None
 
     dtype: Optional[torch.dtype] = None
     device: Optional[torch.device] = None

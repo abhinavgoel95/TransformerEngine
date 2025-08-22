@@ -241,12 +241,63 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
         pow_2_scales: bool = False,
         eps: float = 0.0,
         quant_tile_shape: Tuple[int, int] = (1, 16),
+        with_rht: bool = False,
+        random_sign_mask: torch.Tensor | None = None,
     ):
         super().__init__(rowwise=rowwise, columnwise=columnwise)
         self.dtype = dtype
         self.pow_2_scales = pow_2_scales
         self.eps = eps
         self.quant_tile_shape = quant_tile_shape
+        self.with_rht = with_rht
+        self.random_sign_mask = random_sign_mask
+
+    @staticmethod
+    def _build_hadamard_matrix(size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """Construct a Hadamard matrix of given power-of-two size with entries +-1.
+
+        Uses Sylvester construction to avoid SciPy dependency.
+        """
+        assert (size & (size - 1)) == 0, "Hadamard size must be a power of two"
+        h = torch.ones((1, 1), device=device, dtype=torch.float32)
+        while h.shape[0] < size:
+            h = torch.cat(
+                [
+                    torch.cat([h, h], dim=1),
+                    torch.cat([h, -h], dim=1),
+                ],
+                dim=0,
+            )
+        return h.to(dtype)
+
+    def _apply_rht(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply randomized Hadamard transform without random signs (reference path).
+
+        This matches the reference used in tests: x_reshaped @ (H * (1/sqrt(g))).
+        """
+        # Only apply when enabled
+        if not self.with_rht:
+            return x
+
+        # RHT dimension equals the quantization tile length (NVFP4 uses 16)
+        rht_dim = self.quant_tile_shape[1]
+        assert (
+            x.shape[-1] % rht_dim == 0
+        ), f"Inner dimension {x.shape[-1]} must be divisible by hadamard dimension {rht_dim}"
+
+        # Build H and scale
+        H = self._build_hadamard_matrix(rht_dim, x.device, x.dtype)
+        scale = 1.0 / float(rht_dim) ** 0.5
+
+        # Perform blockwise transform along the last dimension
+        original_shape = x.shape
+        x_mat = x.contiguous().view(-1, rht_dim)
+        # Random sign matrix is identity in this reference (no sign flipping)
+        transform = H * scale
+        if self.random_sign_mask is not None:
+            transform = self.random_sign_mask @ transform
+        out = x_mat @ transform
+        return out.view(original_shape)
 
     @staticmethod
     def _recover_swizzled_scales(
@@ -374,6 +425,7 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
         Optional[torch.Tensor],
         Optional[torch.Tensor],
         torch.Tensor,
+        torch.Tensor,
     ]:
         """
         Python implementation of microblock FP4 quantization.
@@ -404,19 +456,34 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
                 1,
                 16,
             ), "NVFP4 only supports 1x16 tile shape."
-            global_amax = torch.max(torch.abs(tensor)).to(torch.float32).view(1)
+            # Prepare inputs once so we can reuse for both amax and quantization
+            # Row-input will always be the original input.
+            row_input = tensor
+            col_input = (
+                self._apply_rht(tensor.t().contiguous())
+                if self.with_rht
+                else tensor.t().contiguous()
+            )
+            # Compute amax for rowwise and columnwise paths separately
+            global_amax_row = torch.max(torch.abs(row_input)).to(torch.float32).view(1)
+            global_amax_col = (
+                torch.max(torch.abs(col_input)).to(torch.float32).view(1)
+                if self.columnwise_usage
+                else global_amax_row
+            )
 
         transpose_scales = False
 
         M, N = tensor.shape
         if self.rowwise_usage:
+            x_input = row_input
             x_padded = self._pad_tensor(
-                tensor, row_divisor=None, col_divisor=self.quant_tile_shape[1]
+                x_input, row_divisor=None, col_divisor=self.quant_tile_shape[1]
             )
 
             qx, sx = self._quantize_vectorwise_reference(
                 x_padded,
-                global_amax,
+                global_amax_row,
                 self.quant_tile_shape[1],
                 pow_2_scales=self.pow_2_scales,
                 eps=self.eps,
@@ -431,14 +498,14 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
             sx = None
 
         if self.columnwise_usage:
-            x_t = tensor.t().contiguous()
+            x_t = col_input
             x_t_padded = self._pad_tensor(
                 x_t, row_divisor=None, col_divisor=self.quant_tile_shape[1]
             )
 
             qx_t, sx_t = self._quantize_vectorwise_reference(
                 x_t_padded,
-                global_amax,
+                global_amax_col,
                 self.quant_tile_shape[1],
                 pow_2_scales=self.pow_2_scales,
                 eps=self.eps,
@@ -452,7 +519,7 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
             qx_t = None
             sx_t = None
 
-        return qx, sx, qx_t, sx_t, global_amax
+        return qx, sx, qx_t, sx_t, global_amax_row, global_amax_col
 
     def quantize(
         self,
@@ -467,14 +534,15 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
         if x.ndim > 2:
             x = x.view(-1, x.shape[-1])
 
-        qx, sx, qx_t, sx_t, global_amax = self._quantize(x)
+        qx, sx, qx_t, sx_t, global_amax_row, global_amax_col = self._quantize(x)
 
         return NVFP4TensorRef(
             data=qx,
             scale=sx,
             data_t=qx_t,
             scale_t=sx_t,
-            global_amax=global_amax,
+            global_amax_row=global_amax_row,
+            global_amax_col=global_amax_col,
             dtype=x.dtype,
             device=x.device,
             quant_dtype=self.dtype,
@@ -598,15 +666,19 @@ class NVFP4QuantizerRef(ExperimentalQuantizer):
             assert qresult_x is not None
             assert qresult_w is not None
 
-            assert qresult_x.global_amax is not None
-            assert qresult_w.global_amax is not None
+            assert qresult_x.global_amax_row is not None
+            assert qresult_w.global_amax_col is not None
 
             sx = sx.to(torch.float32)
             sw = sw.to(torch.float32)
 
             factor = 6.0 * 6.0 * 448.0 * 448.0
 
-            alpha = torch.div(qresult_x.global_amax * qresult_w.global_amax, factor).squeeze(-1)
+            if gemm_type == quantization.GEMMType.WGRAD:
+                partial_alpha = qresult_x.global_amax_col * qresult_w.global_amax_col
+            else:
+                partial_alpha = qresult_x.global_amax_row * qresult_w.global_amax_row
+            alpha = torch.div(partial_alpha, factor).squeeze(-1)
 
         M, K = high_precision_x.shape
         N, K_w = high_precision_w.shape

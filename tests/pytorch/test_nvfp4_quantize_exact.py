@@ -23,18 +23,6 @@ from test_float8_current_scaling_exact import (
 recipe_available, reason_for_no_recipe = FP8GlobalStateManager.is_nvfp4_available()
 
 
-class GetRecipes:
-
-    @staticmethod
-    def none():
-        return None
-
-    @staticmethod
-    def nvfp4():
-        # return default configs
-        return NVFP4BlockScaling()
-
-
 def unpack_fp4(x: torch.Tensor) -> torch.Tensor:
     repeated = x.repeat_interleave(2, dim=1)
     repeated[:, 0::2] &= 0x0F
