@@ -8,6 +8,8 @@
 #include <cudaTypedefs.h>
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
+#include <curand_kernel.h>
+#include <curand_philox4x32_x.h>
 
 #include <algorithm>
 #include <cfloat>
@@ -18,6 +20,7 @@
 #include "common/recipe/recipe_common.cuh"
 #include "common/transpose/cast_transpose.h"
 #include "common/utils.cuh"
+#include "../util/ptx.cuh"
 #include "nvfp4_utils.cuh"
 
 namespace quantize_transpose_nvfp4 {
@@ -32,7 +35,6 @@ constexpr T RoundUpDivide(const T x, const T y) {
 
 constexpr int kThreadsPerWarp = 32;
 
-#if CUDA_VERSION >= 12080
 // for fp4, we use uint8_t to store 2 fp4 numbers
 constexpr int kNFP4PerContainer = 2;
 
@@ -57,6 +59,8 @@ constexpr int kNumThreadsStore = kTileDim / kNVecOut;
 // constexpr int kNumThreadsReduce = kScaleDim / kNVecOut;
 static_assert(kNumThreadsLoad <= kThreadsPerWarp, "kNumThreadsLoad must be <= kThreadsPerWarp");
 static_assert(kNumThreadsStore <= kThreadsPerWarp, "kNumThreadsStore must be <= kThreadsPerWarp");
+
+#if (defined __CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
 
 template <class ScaleType>
 __device__ __forceinline__ size_t scale_factor_swizzled_offset(size_t row_idx, size_t col_idx,
@@ -99,20 +103,95 @@ __device__ __forceinline__ size_t scale_factor_swizzled_offset(size_t row_idx, s
   return ((rb * cbg_cnt + cbg) * kRowsPerBaseBlockCol + d3) * 16 + d4 * kColsPerBaseBlockCol + d5;
 }
 
+__device__ __forceinline__ __nv_fp4x4_e2m1 cvt_fp32_to_fp4_4x_with_stochastic_rounding(
+    const float2 in01, const float2 in23, const uint32_t rbits) {
+  uint16_t out_4x;
+#if CUDA_ARCH_HAS_CVT_FEATURE
+  asm volatile(
+      "{\n"
+      "cvt.rs.satfinite.e2m1x4.f32 %0, {%3, %4, %1, %2}, %5; \n\t"
+      "}"
+      : "=h"(out_4x)
+      : "f"(in01.y), "f"(in01.x), "f"(in23.y), "f"(in23.x), "r"(rbits));
+#else
+#error \
+    "CUDA_ARCH_HAS_CVT_FEATURE is required for cvt_fp32_to_fp4_4x_with_stochastic_rounding, please specify NVTE_CUDA_ARCHS=100a"
+#endif  // CUDA_ARCH_HAS_CVT_FEATURE
+  return *reinterpret_cast<__nv_fp4x4_e2m1*>(&out_4x);
+}
+
+__device__ __forceinline__ __nv_fp4x4_e2m1 cvt_fp32_to_fp4_4x_with_rn(const float2 in01,
+                                                                      const float2 in23,
+                                                                      const uint32_t rbits) {
+  // NOTE: rbits unused for rn.
+  uint32_t out_4x;  // Only need 16 bit. Using 32 bit container for packing.
+#if CUDA_ARCH_HAS_CVT_FEATURE
+  asm volatile(
+      "{\n"
+      ".reg.b8 f0; \n\t"
+      ".reg.b8 f1; \n\t"
+      "cvt.rn.satfinite.e2m1x2.f32 f0, %1, %2;\n\t"
+      "cvt.rn.satfinite.e2m1x2.f32 f1, %3, %4;\n\t"
+      "mov.b32 %0, {f0, f1, f0, f1};\n\t"
+      "}"
+      : "=r"(out_4x)
+      : "f"(in01.y), "f"(in01.x), "f"(in23.y), "f"(in23.x));
+#else
+#error \
+    "CUDA_ARCH_HAS_CVT_FEATURE is required for cvt_fp32_to_fp4_4x_with_rn, please specify NVTE_CUDA_ARCHS=100a"
+#endif  // CUDA_ARCH_HAS_CVT_FEATURE
+  return reinterpret_cast<__nv_fp4x4_e2m1*>(&out_4x)[0];
+}
+
+template <bool kApplyStochasticRounding>
+__device__ __forceinline__ __nv_fp4x4_e2m1 cvt_fp32_to_fp4_4x(const float2 in01, const float2 in23,
+                                                              const uint32_t rbits) {
+  if constexpr (kApplyStochasticRounding) {
+    return cvt_fp32_to_fp4_4x_with_stochastic_rounding(in01, in23, rbits);
+  } else {
+    return cvt_fp32_to_fp4_4x_with_rn(in01, in23, rbits);
+  }
+}
+
+__device__ __forceinline__ uint32_t get_rbits(curandStatePhilox4_32_10_t& state,
+                                              uint4& random_uint4, int& rnd_idx) {
+  if (rnd_idx == 4) {
+    rnd_idx = 0;
+    random_uint4 = curand4(&state);
+  }
+  // Treat uint4 as an array of 4x uint32_t elements for indexing
+  const uint32_t* const rbits_arr = reinterpret_cast<uint32_t*>(&random_uint4);
+  const uint32_t rbits = rbits_arr[rnd_idx++];
+  return rbits;
+}
+#endif  // (defined __CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
+
 template <bool kReturnIdentity, bool kReturnTranspose, bool kIsE8Scaling, bool kAligned,
-          typename CType, typename IType, typename OType, typename ScaleType, bool kSwizzledScale>
+          typename CType, typename IType, typename OType, typename ScaleType, bool kSwizzledScale,
+          bool kApplyStochasticRounding>
 __global__ void __launch_bounds__(kThreadsPerBlock) block_scaled_1d_cast_transpose_kernel(
     const IType* const input, const float* global_amax, OType* const output_c,
     OType* const output_t, ScaleType* const tile_scales_inv_c, ScaleType* const tile_scales_inv_t,
     const size_t row_length, const size_t num_rows, const size_t scale_stride_x,
     const size_t scale_stride_y, const size_t scale_t_stride_x, const size_t scale_t_stride_y,
-    const size_t kScaleBlockDim, const float epsilon) {
+    const size_t kScaleBlockDim, const float epsilon, const size_t rng_seed,
+    const size_t rng_sequence) {
+#if (defined __CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
   using SMemVec = Vec<IType, kNVecSMem>;
   using OVec = Vec<OType, kNVecContainer>;
   union IVec {
     Vec<IType, kNVecIn> input_type;
     Vec<SMemVec, kNVecIn / kNVecSMem> smem_type;
   };
+
+  curandStatePhilox4_32_10_t state;
+  const size_t rng_offest = threadIdx.x;
+  if constexpr (kApplyStochasticRounding) {
+    curand_init(rng_seed, rng_sequence, rng_offest, &state);
+  }
+  uint4 random_uint4 = kApplyStochasticRounding ? curand4(&state) : uint4{0, 0, 0, 0};
+  int rnd_idx =
+      0;  // Index of the random number. It increments each time when used and resets to 0 if reaches 4x
 
   extern __shared__ char smem_base[];
   SMemVec* smem = reinterpret_cast<SMemVec*>(&smem_base[0]);
@@ -246,18 +325,25 @@ __global__ void __launch_bounds__(kThreadsPerBlock) block_scaled_1d_cast_transpo
       // Step 2.6: Quantize
       OVec output_vec;
 #pragma unroll
-      for (int i = 0; i < kNVecOut / kNVecSMem; ++i) {
-#pragma unroll
-        for (int j = 0; j < kNVecSMem; j += kNFP4PerContainer) {
-          // Pack two elements into __nv_bfloat162
-          float2 f2;
-          f2.x = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(smem_vec[i].data.ele[j],
+      for (int i = 0; i < kNVecOut / kNVecSMem; i += 2) {
+        // Pack two elements into __nv_bfloat162
+        float2 f2_a;
+        float2 f2_b;
+        f2_a.x =
+            ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(smem_vec[i].data.ele[0], encode_scale);
+        f2_a.y =
+            ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(smem_vec[i].data.ele[1], encode_scale);
+        f2_b.x = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(smem_vec[i + 1].data.ele[0],
                                                                   encode_scale);
-          f2.y = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(smem_vec[i].data.ele[j + 1],
+        f2_b.y = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(smem_vec[i + 1].data.ele[1],
                                                                   encode_scale);
-          // Convert to __nv_fp4x2_e2m1
-          output_vec.data.ele[i] = __nv_cvt_float2_to_fp4x2(f2, __NV_E2M1, cudaRoundNearest);
-        }
+        const uint32_t rbits =
+            kApplyStochasticRounding ? get_rbits(state, random_uint4, rnd_idx) : 0;
+        // Convert to __nv_fp4x4_e2m1
+        __nv_fp4x4_e2m1 out_4x = cvt_fp32_to_fp4_4x<kApplyStochasticRounding>(f2_a, f2_b, rbits);
+
+        output_vec.data.ele[i] = reinterpret_cast<__nv_fp4x2_storage_t*>(&out_4x)[0];
+        output_vec.data.ele[i + 1] = reinterpret_cast<__nv_fp4x2_storage_t*>(&out_4x)[1];
       }
       // Step 2.7: Store output_c
       if constexpr (kAligned) {
@@ -354,15 +440,25 @@ __global__ void __launch_bounds__(kThreadsPerBlock) block_scaled_1d_cast_transpo
         // Step 3.6: Quantize
         OVec output_vec;
 #pragma unroll
-        for (int i = 0; i < kNVecOut / kNFP4PerContainer; i += 1) {
+        for (int i = 0; i < kNVecOut / kNFP4PerContainer; i += 2) {
           // Pack two elements into __nv_bfloat162
-          float2 f2;
-          f2.x = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(
+          float2 f2_a;
+          float2 f2_b;
+          f2_a.x = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(
               smem_vec[2 * i].data.ele[smem_idx], encode_scale);
-          f2.y = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(
+          f2_a.y = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(
               smem_vec[2 * i + 1].data.ele[smem_idx], encode_scale);
-          // Convert to __nv_fp4x2_e2m1
-          output_vec.data.ele[i] = __nv_cvt_float2_to_fp4x2(f2, __NV_E2M1, cudaRoundNearest);
+          f2_b.x = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(
+              smem_vec[2 * (i + 1)].data.ele[smem_idx], encode_scale);
+          f2_b.y = ComputeOutputFP4<IType, ScaleType, kIsE8Scaling>(
+              smem_vec[2 * (i + 1) + 1].data.ele[smem_idx], encode_scale);
+          const uint32_t rbits =
+              kApplyStochasticRounding ? get_rbits(state, random_uint4, rnd_idx) : 0;
+          // Convert to __nv_fp4x4_e2m1
+          __nv_fp4x4_e2m1 out_4x = cvt_fp32_to_fp4_4x<kApplyStochasticRounding>(f2_a, f2_b, rbits);
+
+          output_vec.data.ele[i] = reinterpret_cast<__nv_fp4x2_storage_t*>(&out_4x)[0];
+          output_vec.data.ele[i + 1] = reinterpret_cast<__nv_fp4x2_storage_t*>(&out_4x)[1];
         }
         // Step 3.7: Store output_t
         if constexpr (kAligned) {
@@ -383,23 +479,20 @@ __global__ void __launch_bounds__(kThreadsPerBlock) block_scaled_1d_cast_transpo
       }
     }
   }
+#endif  // (defined __CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
 }
-
-#endif  // if CUDA_VERSION >= 12080
 
 }  // namespace
 }  // namespace quantize_transpose_nvfp4
 
 namespace transformer_engine::detail {
 
-void quantize_transpose_vector_blockwise_fp4(const SimpleTensor& input,
-                                             const SimpleTensor& global_amax,
-                                             SimpleTensor& scale_inv, SimpleTensor& scale_inv_t,
-                                             SimpleTensor& output, SimpleTensor& output_t,
-                                             const float epsilon, const bool return_identity,
-                                             const bool return_transpose, const bool pow2_scale,
-                                             const bool swizzled_scale, cudaStream_t stream) {
-  // #if CUDA_VERSION >= 12080
+void quantize_transpose_vector_blockwise_fp4(
+    const SimpleTensor& input, const SimpleTensor& global_amax, SimpleTensor& scale_inv,
+    SimpleTensor& scale_inv_t, SimpleTensor& output, SimpleTensor& output_t, const float epsilon,
+    const bool return_identity, const bool return_transpose, const bool pow2_scale,
+    const bool swizzled_scale, const bool use_stochastic_rounding, const size_t rng_seed,
+    const size_t rng_sequence, cudaStream_t stream) {
 
   NVTE_API_CALL(quantize_transpose_vector_blockwise_fp4);
 
@@ -470,34 +563,37 @@ void quantize_transpose_vector_blockwise_fp4(const SimpleTensor& input,
                       TRANSFORMER_ENGINE_SWITCH_CONDITION(
                           swizzled_scale, kSwizzledScale,
 
-                          size_t smem_bytes = kSMemSize * sizeof(InputType);
-                          if (smem_bytes >= 48 * 1024) {
-                            cudaError_t err = cudaFuncSetAttribute(
-                                &block_scaled_1d_cast_transpose_kernel<
-                                    kReturnIdentity, kReturnTranspose, kPow2Scale, kAligned, float,
-                                    InputType, OutputType, ScaleType, kSwizzledScale>,
-                                cudaFuncAttributeMaxDynamicSharedMemorySize, smem_bytes);
-                            NVTE_CHECK(err == cudaSuccess,
-                                       "Failed to set dynamic shared memory size.");
-                          } block_scaled_1d_cast_transpose_kernel<kReturnIdentity, kReturnTranspose,
-                                                                  kPow2Scale, kAligned, float,
-                                                                  InputType, OutputType, ScaleType,
-                                                                  kSwizzledScale>
-                          <<<grid, kThreadsPerBlock, smem_bytes, stream>>>(
-                              reinterpret_cast<const InputType*>(input.dptr),
-                              reinterpret_cast<const float*>(global_amax.dptr),
-                              reinterpret_cast<OutputType*>(output.dptr),
-                              reinterpret_cast<OutputType*>(output_t.dptr),
-                              reinterpret_cast<ScaleType*>(scale_inv.dptr),
-                              reinterpret_cast<ScaleType*>(scale_inv_t.dptr), row_length, num_rows,
-                              scale_stride_x, scale_stride_y, scale_t_stride_x, scale_t_stride_y,
-                              kScaleBlockDim,
-                              epsilon);)  // kSwizzledScale
-                      )                   // kAligned
-                  )                       // kReturnTranspose
-              )                           // kReturnIdentity
-          )                               // OutputType
-      )                                   // InputType
+                          TRANSFORMER_ENGINE_SWITCH_CONDITION(
+                              use_stochastic_rounding, kApplyStochasticRounding,
+
+                              size_t smem_bytes = kSMemSize * sizeof(InputType);
+                              auto kernel = block_scaled_1d_cast_transpose_kernel<
+                                  kReturnIdentity, kReturnTranspose, kPow2Scale, kAligned, float,
+                                  InputType, OutputType, ScaleType, kSwizzledScale,
+                                  kApplyStochasticRounding>;
+                              if (smem_bytes >= 48 * 1024) {
+                                cudaError_t err = cudaFuncSetAttribute(
+                                    kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                    smem_bytes);
+                                NVTE_CHECK(err == cudaSuccess,
+                                           "Failed to set dynamic shared memory size.");
+                              } kernel<<<grid, kThreadsPerBlock, smem_bytes,
+                                         stream>>>(
+                                  reinterpret_cast<const InputType*>(input.dptr),
+                                  reinterpret_cast<const float*>(global_amax.dptr),
+                                  reinterpret_cast<OutputType*>(output.dptr),
+                                  reinterpret_cast<OutputType*>(output_t.dptr),
+                                  reinterpret_cast<ScaleType*>(scale_inv.dptr),
+                                  reinterpret_cast<ScaleType*>(scale_inv_t.dptr), row_length,
+                                  num_rows, scale_stride_x, scale_stride_y, scale_t_stride_x,
+                                  scale_t_stride_y, kScaleBlockDim, epsilon, rng_seed,
+                                  rng_sequence);)  // kApplyStochasticRounding
+                          )                        // kSwizzledScale
+                      )                            // kAligned
+                  )                                // kReturnTranspose
+              )                                    // kReturnIdentity
+          )                                        // OutputType
+      )                                            // InputType
 
   NVTE_CHECK_CUDA(cudaGetLastError());
 
