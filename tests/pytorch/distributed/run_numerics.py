@@ -24,6 +24,7 @@ from transformer_engine.common.recipe import (
     NVFP4BlockScaling,
     Format,
     Recipe,
+    QParams,
 )
 from transformer_engine.pytorch.tensor.float8_tensor import Float8CurrentScalingQuantizer
 from transformer_engine.pytorch.tensor.nvfp4_tensor import NVFP4Quantizer
@@ -52,6 +53,14 @@ if os.environ.get("NVTE_TEST_NVINSPECT_ENABLED", False):
     )
 
 
+def nvfp4_vanilla():
+    nvfp4_recipe = NVFP4BlockScaling()
+    nvfp4_recipe.fp4_quant_fwd_inp = QParams()
+    nvfp4_recipe.fp4_quant_fwd_weight = QParams()
+    nvfp4_recipe.fp4_quant_bwd_grad = QParams()
+    return nvfp4_recipe
+
+
 # Quantization recipe setup
 def quantization_recipe() -> Recipe:
     if QUANTIZATION == "fp8":
@@ -65,7 +74,7 @@ def quantization_recipe() -> Recipe:
     if QUANTIZATION == "fp8_block_scaling":
         return Float8BlockScaling()
     if QUANTIZATION == "nvfp4":
-        return NVFP4BlockScaling()
+        return nvfp4_vanilla()
     return te.fp8.get_default_fp8_recipe()
 
 

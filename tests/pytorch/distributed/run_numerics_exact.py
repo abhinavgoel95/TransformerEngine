@@ -20,6 +20,7 @@ from transformer_engine.common.recipe import (
     NVFP4BlockScaling,
     Format,
     Recipe,
+    QParams,
 )
 from transformer_engine.pytorch.tensor.nvfp4_tensor import NVFP4Quantizer
 from transformer_engine.pytorch.constants import NVFP4_BLOCK_SCALING_SIZE
@@ -33,10 +34,18 @@ LOSS_FN = nn.MSELoss()
 QUANTIZATION = None
 
 
+def nvfp4_vanilla():
+    nvfp4_recipe = NVFP4BlockScaling()
+    nvfp4_recipe.fp4_quant_fwd_inp = QParams()
+    nvfp4_recipe.fp4_quant_fwd_weight = QParams()
+    nvfp4_recipe.fp4_quant_bwd_grad = QParams()
+    return nvfp4_recipe
+
+
 # Quantization recipe setup
 def quantization_recipe() -> Recipe:
     if QUANTIZATION == "nvfp4":
-        return NVFP4BlockScaling()
+        return nvfp4_vanilla()
     raise ValueError(f"Unsupported quantization: {QUANTIZATION}")
 
 

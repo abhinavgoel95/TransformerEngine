@@ -1191,4 +1191,64 @@ class NVFP4BlockScalingRecipeState(RecipeState):
     def make_quantizers(self) -> list:
         from .tensor.nvfp4_tensor import NVFP4Quantizer
 
-        return [NVFP4Quantizer() for i in range(self.num_quantizers)]
+        if self.mode == "forward":
+            # The index convention (coming from base.py set_meta_tensor)
+            # is somewhat awkward, and doesn't play nicely with QuantizeOp,
+            # which is not associated with a GEMM.
+            assert self.num_quantizers % 3 == 0  # x, w, output per gemm
+            return list(
+                itertools.chain.from_iterable(
+                    [
+                        [
+                            NVFP4Quantizer(
+                                fp4_dtype=self.dtype,
+                                rowwise=True,
+                                columnwise=True,
+                                with_rht=self.recipe.fp4_quant_fwd_inp.fp4_random_hadamard_transform,
+                                with_post_rht_amax=self.recipe.fp4_quant_fwd_inp.fp4_random_hadamard_transform,
+                            ),
+                            NVFP4Quantizer(
+                                fp4_dtype=self.dtype,
+                                rowwise=True,
+                                columnwise=True,
+                                with_rht=self.recipe.fp4_quant_fwd_weight.fp4_random_hadamard_transform,
+                                with_post_rht_amax=self.recipe.fp4_quant_fwd_weight.fp4_random_hadamard_transform,
+                            ),
+                            NVFP4Quantizer(
+                                fp4_dtype=self.dtype,
+                                rowwise=True,
+                                columnwise=True,
+                                with_rht=self.recipe.fp4_quant_fwd_inp.fp4_random_hadamard_transform,
+                                with_post_rht_amax=self.recipe.fp4_quant_fwd_inp.fp4_random_hadamard_transform,
+                            ),
+                        ]
+                        for _ in range(self.num_quantizers // 3)
+                    ]
+                )
+            )
+
+        assert self.mode == "backward", f"Unexpected mode {self.mode}"
+        assert self.num_quantizers % 2 == 0  # grad_output and grad_input per gemm
+        return list(
+            itertools.chain.from_iterable(
+                [
+                    [
+                        NVFP4Quantizer(
+                            fp4_dtype=self.dtype,
+                            rowwise=True,
+                            columnwise=True,
+                            with_rht=self.recipe.fp4_quant_bwd_grad.fp4_random_hadamard_transform,
+                            with_post_rht_amax=self.recipe.fp4_quant_bwd_grad.fp4_random_hadamard_transform,
+                        ),
+                        NVFP4Quantizer(
+                            fp4_dtype=self.dtype,
+                            rowwise=True,
+                            columnwise=True,
+                            with_rht=self.recipe.fp4_quant_bwd_grad.fp4_random_hadamard_transform,
+                            with_post_rht_amax=self.recipe.fp4_quant_bwd_grad.fp4_random_hadamard_transform,
+                        ),
+                    ]
+                    for _ in range(self.num_quantizers // 2)
+                ]
+            )
+        )

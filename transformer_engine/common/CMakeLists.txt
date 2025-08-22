@@ -61,6 +61,7 @@ list(APPEND transformer_engine_SOURCES
      multi_tensor/scale.cu
      multi_tensor/sgd.cu
      transpose/cast_transpose.cu
+     transpose/hadamard_transform.cu
      transpose/transpose.cu
      transpose/cast_transpose_fusion.cu
      transpose/transpose_fusion.cu

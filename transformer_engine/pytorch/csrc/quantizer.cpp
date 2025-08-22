@@ -1718,9 +1718,45 @@ void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
   // RHT & compute amax
   // If using RHT, then amax will be computed in the RHT step
   // If not using RHT, then amax will be computed based on input x
+  at::Tensor rht_output_t;  // The RHT(x_t) output, in columnwise layout
+  // This wrapper is going to be passed as input to the quantization kernel.
+  TensorWrapper rht_output_t_cpp;  // Wrapper to contain the RHT(x) and RHT(x_t) outputs
   if (this->with_rht) {
-    // raise error since it's not supported yet
-    NVTE_CHECK(false, "RHT is not supported yet");
+    // We only need RHT for columnwise usage.
+    // flat first dim and last dim for multi dimensional input
+    size_t rows = 1;
+    for (size_t i = 0; i < input.ndim() - 1; ++i) {
+      rows *= input.size(i);
+    }
+    size_t cols = input.size(input.ndim() - 1);
+    if (columnwise_usage) {
+      rht_output_t =
+          allocateTorchTensor(static_cast<int>(cols), static_cast<int>(rows), input.dtype());
+      // NOTE: This is non-intuitive, we are writing the result of transposed RHT to the
+      // output of rowwise.
+      rht_output_t_cpp.set_rowwise_data(rht_output_t.data_ptr(), input.dtype(),
+                                        std::vector<size_t>{cols, rows});
+    }
+  }
+
+  if (this->with_rht) {
+    if (input.dtype() != DType::kBFloat16) {
+      NVTE_CHECK(false, "RHT is only supported for bfloat16 input");
+    }
+    if (this->with_post_rht_amax) {
+      // We need:
+      // 1. Rowwise amax = amax for input
+      // 2. Columnwise amax = amax for RHT(input.t)
+      NVTE_SCOPED_GIL_RELEASE(
+          { nvte_hadamard_transform_amax(input.data(), out.data(), quant_config, stream); });
+    } else {
+      // raise error since it's not supported yet
+      NVTE_CHECK(false, "Pre-RHT amax is not supported yet");
+    }
+    NVTE_SCOPED_GIL_RELEASE({
+      // Perform the RHT(input.t), and write to rht_output_cpp.columnwise.
+      nvte_hadamard_transform(input.data(), rht_output_t_cpp.data(), quant_config, stream);
+    });
   } else {
     // compute amax based on input x
     NVTE_SCOPED_GIL_RELEASE({ nvte_compute_amax(input.data(), out.data(), stream); });
@@ -1757,78 +1793,68 @@ void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
         { this->amax_reduction_group->allreduce_coalesced(amax_tensors, opts)->wait(); });
   }
 
-  NVTE_SCOPED_GIL_RELEASE({
-    nvte_quantize_v2(input.data(), out.data(), quant_config, at::cuda::getCurrentCUDAStream());
-  });
+  if (this->with_rht) {
+    if (rowwise_usage) {
+      // For rowwise usage, we need to quantize the input directly, but we need to avoid quantizing columnwise
+      TensorWrapper out_identity(out.scaling_mode());
+      auto out_identity_data = out.get_rowwise_data();
+      auto out_identity_scale_inv = out.get_rowwise_scale_inv();
+      auto out_identity_amax = out.get_amax();
+      out_identity.set_rowwise_data(out_identity_data.data_ptr, static_cast<DType>(out_identity_data.dtype), out_identity_data.shape);
+      out_identity.set_rowwise_scale_inv(out_identity_scale_inv.data_ptr, static_cast<DType>(out_identity_scale_inv.dtype), out_identity_scale_inv.shape);
+      out_identity.set_amax(out_identity_amax.data_ptr, static_cast<DType>(out_identity_amax.dtype), out_identity_amax.shape);
+
+      NVTE_SCOPED_GIL_RELEASE(
+          { nvte_quantize_v2(input.data(), out_identity.data(), quant_config, stream); });
+    }
+
+    if (columnwise_usage) {
+      // Get the output columnwise data, scale_inv, and amax
+      auto out_columnwise_data = out.get_columnwise_data();
+      auto out_columnwise_scale_inv = out.get_columnwise_scale_inv();
+      // NOTE: should already be populated.
+      // TODO(Frank): Shoule we add an assert here?
+      auto out_columnwise_amax = out.get_columnwise_amax();
+
+      // Create a wrapper for the columnwise output, as the rowwise output.
+      // The reason is due to the input `rht_output_t` is already in the transposed layout.
+      // Thus, we only need a rowwise quantization to generate the columnwise output.
+      TensorWrapper out_transpose(out.scaling_mode());
+      // Note: since we are faking columnwise tensor into rowwise, the flat first dim check will fail
+      // need to convert the shape to 2D here
+      auto colwise_data_shape = out_columnwise_data.shape;
+      std::vector<size_t> colwise_data_shape_2d;
+      // shape could be [512, 32, 64], that's actually 512, 32, 128 because 2 FP4 take 1 byte
+      // the 2D shape should be [512, 32*128], but columnwise data shape expect last dim to be halved again
+      // so the multiple 2 get cancelled out
+      colwise_data_shape_2d.push_back(colwise_data_shape.data[0]);
+      size_t last_dim = 1;
+      for (size_t i = 1; i < colwise_data_shape.ndim; ++i) {
+        last_dim *= colwise_data_shape.data[i];
+      }
+      colwise_data_shape_2d.push_back(last_dim);
+
+      out_transpose.set_rowwise_data(out_columnwise_data.data_ptr,
+                                     static_cast<DType>(out_columnwise_data.dtype),
+                                     colwise_data_shape_2d);
+      out_transpose.set_rowwise_scale_inv(out_columnwise_scale_inv.data_ptr,
+                                          static_cast<DType>(out_columnwise_scale_inv.dtype),
+                                          out_columnwise_scale_inv.shape);
+      out_transpose.set_amax(out_columnwise_amax.data_ptr,
+                             static_cast<DType>(out_columnwise_amax.dtype),
+                             out_columnwise_amax.shape);
+
+      // Quantize kernel will treat everything as rowwise input/output, which is
+      // intended.
+      NVTE_SCOPED_GIL_RELEASE({
+        nvte_quantize_v2(rht_output_t_cpp.data(), out_transpose.data(), quant_config, stream);
+      });
+    }
+  } else {
+    NVTE_SCOPED_GIL_RELEASE({ nvte_quantize_v2(input.data(), out.data(), quant_config, stream); });
+  }
 }
 
-// void NVFP4Quantizer::quantize(const TensorWrapper& input, TensorWrapper& out,
-//                               const std::optional<TensorWrapper>& noop_flag) {
-//   if (input.numel() == 0) {
-//     return;
-//   }
-//   QuantizationConfigWrapper quant_config;
-//   if (noop_flag) {
-//     quant_config.set_noop_tensor(noop_flag->data());
-//   }
-
-//   if (out.columnwise_dptr() == nullptr) {
-//     NVTE_SCOPED_GIL_RELEASE({
-//       nvte_quantize_v2(input.data(), out.data(), quant_config, at::cuda::getCurrentCUDAStream());
-//     });
-//     return;
-//   }
-
-//   // Allocate tensor for high precision tranpose output.
-//   const auto nvte_shape = input.shape();
-//   const auto nvte_transpose_shape = out.get_columnwise_data().shape;
-//   NVTE_CHECK(nvte_transpose_shape.ndim >= 2, "Insufficient number of dimensions for transpose.");
-
-//   std::vector<int64_t> transpose_shape_int64;
-//   int64_t last_dim = nvte_shape.data[nvte_shape.ndim - 1];
-//   int64_t flat_first_dim = 1;
-//   transpose_shape_int64.push_back(last_dim);
-//   for (size_t i = 0; i < nvte_shape.ndim - 1; ++i) {
-//     flat_first_dim *= nvte_shape.data[i];
-//   }
-//   transpose_shape_int64.push_back(flat_first_dim);
-
-//   // Make a 2D input wrapper for transpose kernel.
-//   NVTEShape nvte_shape_2d;
-//   nvte_shape_2d.ndim = 2;
-//   nvte_shape_2d.data[0] = flat_first_dim;
-//   nvte_shape_2d.data[1] = last_dim;
-//   TensorWrapper input_2d(input.dptr(), nvte_shape_2d, input.dtype());
-
-//   const auto opts = at::TensorOptions().dtype(GetATenDType(input.dtype())).device(torch::kCUDA);
-//   at::Tensor input_transpose_torch = at::empty(transpose_shape_int64, opts);
-//   auto input_transpose = makeTransformerEngineTensor(input_transpose_torch);
-
-//   // Since the 2x output kernel is not supported for NVFP4 we do the following instead:
-//   // 1. Transpose input tensor in high precision.
-//   // 2. Use the nvfp4 1x output rowwise quantize kernel to generate rowwise quantized output.
-//   // 3. Use the nvfp4 1x output rowwise quantize kernel to generate columnwise quantized output
-//   //    from the output of transpose in 1.
-//   TensorWrapper rowwise_quantized(NVTE_NVFP4_1D_SCALING);
-//   rowwise_quantized.set_rowwise_data(out.dptr(), DType::kFloat4E2M1, nvte_shape);
-//   rowwise_quantized.set_rowwise_scale_inv(out.get_rowwise_scale_inv().data_ptr, DType::kFloat8E4M3,
-//                                           out.scale_inv_shape());
-
-//   TensorWrapper columnwise_quantized(NVTE_NVFP4_1D_SCALING);
-//   columnwise_quantized.set_rowwise_data(out.columnwise_dptr(), DType::kFloat4E2M1,
-//                                         nvte_transpose_shape);
-//   columnwise_quantized.set_rowwise_scale_inv(out.get_columnwise_scale_inv().data_ptr,
-//                                              DType::kFloat8E4M3,
-//                                              out.get_columnwise_scale_inv().shape);
-
-//   NVTE_SCOPED_GIL_RELEASE({
-//     nvte_transpose(input_2d.data(), input_transpose.data(), at::cuda::getCurrentCUDAStream());
-//     nvte_quantize_v2(input.data(), rowwise_quantized.data(), quant_config,
-//                      at::cuda::getCurrentCUDAStream());
-//     nvte_quantize_v2(input_transpose.data(), columnwise_quantized.data(), quant_config,
-//                      at::cuda::getCurrentCUDAStream());
-//   });
-// }
 
 std::vector<size_t> NVFP4Quantizer::get_scale_shape(const std::vector<size_t>& shape,
                                                     bool columnwise) const {

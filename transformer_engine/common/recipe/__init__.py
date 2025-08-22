@@ -60,17 +60,24 @@ class QParams:
     """Quantization parameters.
     power_2_scale: use power of 2 scale parameter
     amax_epsilon: optional minimum value of abs max
-    double_quantization: whether to use double quantization
     fp4_random_hadamard_transform: whether to use random hadamard transform
     fp4_stochastic_rounding: whether to use stocastic rounding
     """
 
     power_2_scale: bool = False
     amax_epsilon: float = 0.0
-    double_quantization: bool = False
     fp4_random_hadamard_transform: bool = False
     fp4_stochastic_rounding: bool = False
+    fp4_2d_quantization: bool = False
 
+    def __repr__(self) -> str:
+        return (
+            f"Qparams(\npower_2_scale={self.power_2_scale},\n"
+            f"amax_epsilon={self.amax_epsilon},\n"
+            f"fp4_random_hadamard_transform={self.fp4_random_hadamard_transform},\n"
+            f"fp4_stochastic_rounding={self.fp4_stochastic_rounding},\n"
+            f"fp4_2d_quantization={self.fp4_2d_quantization}\n)"
+        )
 
 class Recipe:
     """
@@ -445,27 +452,31 @@ class NVFP4BlockScaling(Recipe):
              Disable FP8 attention for now
     """
 
+    # Env variable to disable RHT
+    disable_rht: bool = os.getenv("NVTE_NVFP4_DISABLE_RHT", "0") == "1"
+    disable_stochastic_rounding: bool = os.getenv("NVTE_NVFP4_DISABLE_STOCHASTIC_ROUNDING", "0") == "1"
+    disable_2d_quantization: bool = os.getenv("NVTE_NVFP4_DISABLE_2D_QUANTIZATION", "0") == "1"
+
     fp4_format: Format = Format.E2M1
     fp8_format: Format = Format.E4M3
-    fp8_quant_fwd_inp = QParams(
-        double_quantization=False,
-        fp4_random_hadamard_transform=False,
+    # TODO: currently, RHT is only applied to columnwise usage
+    # we haven't made is configurable for now
+    # this way, only WGRAD computation is using RHT
+    fp4_quant_fwd_inp = QParams(
+        fp4_random_hadamard_transform=True if not disable_rht else False,
         fp4_stochastic_rounding=False,
     )
-    fp8_quant_fwd_weight = QParams(
-        double_quantization=False,
+    fp4_quant_fwd_weight = QParams(
         fp4_random_hadamard_transform=False,
         fp4_stochastic_rounding=False,
+        fp4_2d_quantization=False,
     )
-    fp8_quant_bwd_grad = QParams(
-        double_quantization=False,
-        fp4_random_hadamard_transform=False,
+    fp4_quant_bwd_grad = QParams(
+        fp4_random_hadamard_transform=True if not disable_rht else False,
         fp4_stochastic_rounding=False,
+        fp4_2d_quantization=True if not disable_2d_quantization else False,
     )
-    # split_accumulator is not relevant for NVFP4 scaling
-    fp8_gemm_fprop: MMParams = MMParams(use_split_accumulator=False)
-    fp8_gemm_dgrad: MMParams = MMParams(use_split_accumulator=False)
-    fp8_gemm_wgrad: MMParams = MMParams(use_split_accumulator=False)
+    # Not applying quantization to attention for now
     fp8_dpa: bool = False
     fp8_mha: bool = False
 
@@ -479,5 +490,8 @@ class NVFP4BlockScaling(Recipe):
             f"fp4_format={str(self.fp4_format).split('.')[1]}, "
             f"fp8_format={str(self.fp8_format).split('.')[1]}, "
             f"fp8_dpa={self.fp8_dpa}, "
-            f"fp8_mha={self.fp8_mha}"
+            f"fp8_mha={self.fp8_mha}, "
+            f"fp4_quant_fwd_inp={self.fp4_quant_fwd_inp}, "
+            f"fp4_quant_fwd_weight={self.fp4_quant_fwd_weight}, "
+            f"fp4_quant_bwd_grad={self.fp4_quant_bwd_grad}, "
         )
