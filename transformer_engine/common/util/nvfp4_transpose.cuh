@@ -577,10 +577,10 @@ __global__ void __launch_bounds__(THREADS_NUM)
 
         // 3. Scale elements
         fp4e2m1x4 regs[SCALE_DIM / 4];
-        const uint32_t rbits = get_rbits(state, random_uint4, rnd_idx);
 
 #pragma unroll
         for (int e = 0; e < SCALE_DIM / 4; ++e) {
+          const uint32_t rbits = get_rbits(state, random_uint4, rnd_idx);
           if constexpr (NO_ACTIVATIONS_NOT_FP32_INPUT) {
             const uint64_t elts = *reinterpret_cast<uint64_t *>(&in_colwise_IType[4 * e]);
             regs[e] = mul_cvt_bf16_to_fp4_4x<USE_STOCHASTIC_ROUNDING>(elts, block_scale_inverse_2x,
@@ -755,13 +755,13 @@ __global__ void __launch_bounds__(THREADS_NUM)
             1.0f / (static_cast<float>(S_dec_b_fp8) * S_dec_rowwise), float_max);  // S_enc_b_fp8
         const float2 block_scale_inverse_2x{block_scale_inverse, block_scale_inverse};
 
-        const uint32_t rbits = get_rbits(state, random_uint4, rnd_idx);
 // 3. Scale elements
 #pragma unroll
         for (int w = 0; w < WAVES; ++w) {
           Vec<fp4e2m1x4, PACK_SIZE / 4> out;
 #pragma unroll
           for (int e = 0; e < PACK_SIZE / 4; ++e) {
+            const uint32_t rbits = get_rbits(state, random_uint4, rnd_idx);
             IType2 in01;
             IType2 in23;
             if constexpr (NO_ACTIVATIONS_NOT_FP32_INPUT) {

@@ -2105,10 +2105,22 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
                    "this shape");
 
         quantize_transpose_vector_blockwise_fp4(
-            input_tensor->data, global_amax, output_tensor->scale_inv,
-            output_tensor->columnwise_scale_inv, output_tensor->data,
-            output_tensor->columnwise_data, 0.0f, output_tensor->has_data(),
-            output_tensor->has_columnwise_data(), false, false, stream);
+            /*input=*/input_tensor->data,
+            /*global_amax=*/global_amax,
+            /*scale_inv=*/output_tensor->scale_inv,
+            /*scale_inv_t=*/output_tensor->columnwise_scale_inv,
+            /*output=*/output_tensor->data,
+            /*output_t=*/output_tensor->columnwise_data,
+            /*epsilon=*/0.0f,
+            /*return_identity=*/output_tensor->has_data(),
+            /*return_transpose=*/output_tensor->has_columnwise_data(),
+            /*pow2_scale=*/false,
+            /*swizzled_scale=*/false,
+            /*use_stochastic_rounding=*/
+            false,  // TODO(Frank): Add config to use stochastic rounding.
+            /*rng_seed=*/(quant_config_cpp != nullptr) ? quant_config_cpp->rng_seed : 0,
+            /*rng_sequence=*/(quant_config_cpp != nullptr) ? quant_config_cpp->rng_sequence : 0,
+            /*stream=*/stream);
       }
       break;
     }
