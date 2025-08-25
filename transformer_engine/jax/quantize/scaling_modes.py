@@ -743,5 +743,5 @@ SCALING_MODES_TO_IMPL: Dict[ScalingMode, ScalingModeMetadataImpl] = {
     ScalingMode.DELAYED_TENSOR_SCALING: DelayedScalingModeMetadataImpl(),
     ScalingMode.MXFP8_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 32), scale_dtype=jnp.float8_e8m0fnu),
     ScalingMode.CURRENT_TENSOR_SCALING: CurrentScalingModeMetadataImpl(),
-    ScalingMode.NVFP4_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 16), scale_dtype=jnp.float8_e4m3fnu),
+    ScalingMode.NVFP4_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 16), scale_dtype=jnp.float8_e4m3fn),
 }

@@ -139,8 +139,8 @@ Error_Type DBiasQuantizeFFI(cudaStream_t stream, Buffer_Type input_buf, Buffer_T
                   scale_inv_buf->dimensions().size())});
     }
     if (is_nvfp4) {
-      float *amax = reinterpret_cast<float *>(amax_buf->untyped_data());
-      NVTE_CHECK(amax != nullptr, "amax must be provided for NVFP4";
+      float *amax = reinterpret_cast<float *>(amax_buf.untyped_data());
+      NVTE_CHECK(amax != nullptr, "amax must be provided for NVFP4");
       input_tensor.set_amax(amax, DType::kFloat32, std::vector<size_t>{1});
     }
   }
