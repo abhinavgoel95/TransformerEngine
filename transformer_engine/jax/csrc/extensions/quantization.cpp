@@ -122,7 +122,7 @@ Error_Type DBiasQuantizeFFI(cudaStream_t stream, Buffer_Type input_buf, Buffer_T
       float *scale = reinterpret_cast<float *>(scale_buf.untyped_data());
       NVTE_CHECK(scale != nullptr, "scale must be provided for delayed tensor scaling");
       output_tensor.set_scale(scale, DType::kFloat32, std::vector<size_t>{1});
-      auto amax_ptr = nullptr;
+      float* amax_ptr = nullptr;
       if (scaling_mode == JAXX_Scaling_Mode::DELAYED_TENSOR_SCALING){
         amax_ptr = reinterpret_cast<float *>(amax_buf->untyped_data());
         NVTE_CHECK(amax_ptr != nullptr, "amax must be provided for delayed tensor scaling");
