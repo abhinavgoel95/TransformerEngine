@@ -55,7 +55,7 @@ pybind11::tuple GetDBiasQuantizeWorkspaceSizes(size_t batch_size, size_t hidden_
     }
   }
 
-  if (is_fp8_dtype(out_dtype) && scaling_mode == JAXX_Scaling_Mode::DELAYED_TENSOR_SCALING) {
+  if (scaling_mode == JAXX_Scaling_Mode::DELAYED_TENSOR_SCALING || scaling_mode == JAXX_Scaling_Mode::NVFP4_1D_SCALING) {
     output_tensor.set_amax(reinterpret_cast<void *>(&temp), DType::kFloat32,
                            std::vector<size_t>{1});
     output_tensor.set_scale(reinterpret_cast<void *>(&temp), DType::kFloat32,
@@ -111,37 +111,44 @@ Error_Type DBiasQuantizeFFI(cudaStream_t stream, Buffer_Type input_buf, Buffer_T
 
   bool const is_tensor_scaling = scaling_mode == JAXX_Scaling_Mode::DELAYED_TENSOR_SCALING ||
                                  scaling_mode == JAXX_Scaling_Mode::CURRENT_TENSOR_SCALING;
+  bool const is_mxfp8 = scaling_mode == JAXX_Scaling_Mode::MXFP8_1D_SCALING;
+  bool const is_nvfp4 = scaling_mode == JAXX_Scaling_Mode::NVFP4_1D_SCALING;
 
   if (quantize_layout == QuantizeLayout::ROWWISE ||
       quantize_layout == QuantizeLayout::ROWWISE_COLWISE) {
     output_tensor.set_rowwise_data(output, out_dtype, output_shape);
 
-    if (is_fp8_dtype(out_dtype)) {
-      if (is_tensor_scaling) {
-        float *scale = reinterpret_cast<float *>(scale_buf.untyped_data());
-        float *amax = reinterpret_cast<float *>(amax_buf->untyped_data());
-        NVTE_CHECK(scale != nullptr, "scale must be provided for delayed tensor scaling");
-        NVTE_CHECK(amax != nullptr, "amax must be provided for delayed tensor scaling");
-        output_tensor.set_scale(scale, DType::kFloat32, std::vector<size_t>{1});
-        nvte_memset(amax, 0, sizeof(float), stream);
-        output_tensor.set_amax(amax, DType::kFloat32, std::vector<size_t>{1});
-        output_tensor.set_rowwise_scale_inv(
-            scale_inv_buf->untyped_data(),
-            convert_ffi_datatype_to_te_dtype(scale_inv_buf->element_type()),
-            std::vector<size_t>{1});
-      } else {
-        output_tensor.set_rowwise_scale_inv(
-            scale_inv_buf->untyped_data(),
-            convert_ffi_datatype_to_te_dtype(scale_inv_buf->element_type()),
-            std::vector<size_t>{product(scale_inv_buf->dimensions(), 0, flatten_axis),
-                                product(scale_inv_buf->dimensions(), flatten_axis,
-                                        scale_inv_buf->dimensions().size())});
+    if (is_tensor_scaling || is_nvfp4) {
+      float *scale = reinterpret_cast<float *>(scale_buf.untyped_data());
+      NVTE_CHECK(scale != nullptr, "scale must be provided for delayed tensor scaling");
+      output_tensor.set_scale(scale, DType::kFloat32, std::vector<size_t>{1});
+      auto amax_ptr = nullptr;
+      if (scaling_mode == JAXX_Scaling_Mode::DELAYED_TENSOR_SCALING){
+        amax_ptr = reinterpret_cast<float *>(amax_buf->untyped_data());
+        NVTE_CHECK(amax_ptr != nullptr, "amax must be provided for delayed tensor scaling");
+        nvte_memset(amax_ptr, 0, sizeof(float), stream);
       }
+      output_tensor.set_amax(amax_ptr, DType::kFloat32, std::vector<size_t>{1});
+    }
+
+    if (is_tensor_scaling){
+      output_tensor.set_rowwise_scale_inv(
+        scale_inv_buf->untyped_data(),
+        convert_ffi_datatype_to_te_dtype(scale_inv_buf->element_type()),
+        std::vector<size_t>{1});
+    } else if (is_mxfp8 || is_nvfp4) {
+      output_tensor.set_rowwise_scale_inv(
+        scale_inv_buf->untyped_data(),
+        convert_ffi_datatype_to_te_dtype(scale_inv_buf->element_type()),
+        std::vector<size_t>{product(scale_inv_buf->dimensions(), 0, flatten_axis),
+          product(scale_inv_buf->dimensions(), flatten_axis,
+                  scale_inv_buf->dimensions().size())});
     }
   }
 
   if (quantize_layout == QuantizeLayout::COLWISE ||
       quantize_layout == QuantizeLayout::ROWWISE_COLWISE) {
+    NVTE_CHECK(!is_nvfp4, "NVFP4 does not support colwise quantization!");
     auto &tmp_shape = (scaling_mode == JAXX_Scaling_Mode::DELAYED_TENSOR_SCALING)
                           ? output_trans_shape
                           : output_shape;
@@ -160,10 +167,6 @@ Error_Type DBiasQuantizeFFI(cudaStream_t stream, Buffer_Type input_buf, Buffer_T
               product(tmp_buf->dimensions(), 0, flatten_axis),
               product(tmp_buf->dimensions(), flatten_axis, tmp_buf->dimensions().size())});
     }
-  }
-
-  if (scaling_mode == JAXX_Scaling_Mode::CURRENT_TENSOR_SCALING) {
-    output_tensor.set_amax(nullptr, DType::kFloat32, std::vector<size_t>{1});
   }
 
   auto dbias_tensor = TensorWrapper(dbias, dbias_shape, in_dtype);

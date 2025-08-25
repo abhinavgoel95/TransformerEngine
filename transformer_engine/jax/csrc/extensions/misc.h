@@ -45,6 +45,7 @@ enum class JAXX_Scaling_Mode : int64_t {
   DELAYED_TENSOR_SCALING = 1,
   MXFP8_1D_SCALING = 2,
   CURRENT_TENSOR_SCALING = 3,
+  NVFP4_1D_SCALING = 4,
 };
 
 inline bool is_tensor_scaling(const JAXX_Scaling_Mode &mode) {
@@ -69,6 +70,9 @@ static NVTEScalingMode get_nvte_scaling_mode(const JAXX_Scaling_Mode &mode) {
       break;
     case JAXX_Scaling_Mode::CURRENT_TENSOR_SCALING:
       return NVTEScalingMode::NVTE_DELAYED_TENSOR_SCALING;
+      break;
+    case JAXX_Scaling_Mode::NVFP4_1D_SCALING:
+      return NVTEScalingMode::NVTE_NVFP4_1D_SCALING;
       break;
     default:
       NVTE_ERROR("Invalid Scaling Mode ", static_cast<int>(mode));

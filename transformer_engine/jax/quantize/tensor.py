@@ -114,6 +114,7 @@ class ScaledTensor1x(ScaledTensor):
 
     data: jnp.ndarray
     scale_inv: jnp.ndarray
+    amax: jnp.ndarray
     scaling_mode: ScalingMode
     dq_dtype: jnp.dtype
     _dq_func: Callable
@@ -152,7 +153,7 @@ class ScaledTensor1x(ScaledTensor):
         Returns:
             A tuple containing (children, aux_data) for tree operations
         """
-        children = (self.data, self.scale_inv)
+        children = (self.data, self.scale_inv, self.amax)
         aux_data = (
             self.scaling_mode,
             self.dq_dtype,
@@ -224,6 +225,7 @@ class ScaledTensor1x(ScaledTensor):
         return ScaledTensor1x(
             data=data,
             scale_inv=scale_inv,
+            amax=self.amax,
             scaling_mode=self.scaling_mode,
             dq_dtype=self.dq_dtype,
             _dq_func=self._dq_func,
@@ -255,6 +257,7 @@ class GroupedScaledTensor1x(ScaledTensor1x):
         self,
         data,
         scale_inv,
+        amax,
         group_sizes,
         scaling_mode,
         dq_dtype,
@@ -270,7 +273,7 @@ class GroupedScaledTensor1x(ScaledTensor1x):
         self.original_shape = original_shape
         self.group_axis = group_axis
         super().__init__(
-            data, scale_inv, scaling_mode, dq_dtype, _dq_func, is_colwise, data_layout, flatten_axis
+            data, scale_inv, amax, scaling_mode, dq_dtype, _dq_func, is_colwise, data_layout, flatten_axis
         )
 
     def __post_init__(self):
@@ -308,7 +311,7 @@ class GroupedScaledTensor1x(ScaledTensor1x):
         Returns:
             A tuple containing (children, aux_data) for tree operations
         """
-        children = (self.data, self.scale_inv, self.group_sizes)
+        children = (self.data, self.scale_inv, self.group_sizes, self.amax)
         aux_data = (
             self.scaling_mode,
             self.dq_dtype,

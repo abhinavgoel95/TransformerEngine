@@ -151,6 +151,7 @@ PYBIND11_MODULE(transformer_engine_jax, m) {
       .value("DELAYED_TENSOR_SCALING", JAXX_Scaling_Mode::DELAYED_TENSOR_SCALING)
       .value("MXFP8_1D_SCALING", JAXX_Scaling_Mode::MXFP8_1D_SCALING)
       .value("CURRENT_TENSOR_SCALING", JAXX_Scaling_Mode::CURRENT_TENSOR_SCALING)
+      .value("NVFP4_1D_SCALING", JAXX_Scaling_Mode::NVFP4_1D_SCALING)
       .export_values();
 
   pybind11::enum_<transformer_engine::jax::QuantizeLayout>(m, "QuantizeLayout",
