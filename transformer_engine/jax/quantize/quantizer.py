@@ -540,6 +540,124 @@ class BlockScaleQuantizer(Quantizer):
 
 @register_pytree_node_class
 @dataclass
+class NVFP4Quantizer(Quantizer):
+    """Quantizer implementation using current scaling.
+
+    This quantizer uses current scaling mode with float32 scales
+
+    Attributes:
+        scaling_mode: Set to NVFP4_1D_SCALING or NVFP4_2D_SCALING
+        q_layout: Quantization axis - only ROWWISE is supported
+    """
+
+    scaling_mode: ScalingMode = ScalingMode.NVFP4_1D_SCALING
+    q_layout: QuantizeLayout = QuantizeLayout.ROWWISE
+    data_layout: str = "NT"
+
+    def _quantize_func(self, x, is_colwise=False, dq_dtype=None, flatten_axis=-1) -> ScaledTensor1x:
+        """Quantize function helper for block scaling FP8.
+
+        Args:
+            x: Input tensor to quantize
+            is_colwise: Whether to use column-wise quantization
+            dq_dtype: Data type for dequantized values
+            flatten_axis: The quantization axis for the tensor
+
+        Returns:
+            A ScaledTensor1x containing the quantized data
+        """
+        # TODO(Phuong): use quantize_func from JAX
+        if flatten_axis < 0:
+            flatten_axis = x.ndim + flatten_axis
+        assert (
+            0 <= flatten_axis < x.ndim
+        ), f"Invalid flatten_axis: {flatten_axis} for tensor of shape {x.shape}"
+
+        dq_dtype = dq_dtype if dq_dtype is not None else x.dtype
+        x_shape = x.shape
+        scale_shape = self.scaling_mode.get_scale_shape(
+            x_shape, is_colwise, is_padded=False, flatten_axis=flatten_axis
+        )
+        scale_dtype = self.scaling_mode.get_scale_dtype()
+        x = x.reshape(
+            *x_shape[: flatten_axis - 1],
+            scale_shape[flatten_axis - 1],
+            int(x_shape[flatten_axis - 1] / scale_shape[flatten_axis - 1]),
+            *x_shape[flatten_axis:-1],
+            scale_shape[-1],
+            int(x_shape[-1] / scale_shape[-1]),
+        )
+
+        # Dtype max constants
+        DATA_DTYPE_MAX = jnp.finfo(self.q_dtype).max.astype(jnp.float32)
+        SCALE_DTYPE_MAX = jnp.finfo(scale_dtype).max.astype(jnp.float32)
+
+        # Level 1: Current Tensor Scaling
+        global_amax = jnp.max(jnp.abs(x)).reshape((1,)).astype(jnp.float32)
+        tensor_scale = DATA_DTYPE_MAX * SCALE_DTYPE_MAX / global_amax
+        tensor_scale = jnp.where(tensor_scale == jnp.array(0.0, dtype=jnp.float32),
+                                 jnp.array(1.0, dtype=jnp.float32), tensor_scale)
+
+        # Level 2: Block Scaling
+        block_amax = jnp.max(jnp.abs(x), axis=(flatten_axis + 2 - 2, -1),
+                             keepdims=True).astype(jnp.float32)
+        block_scale_inv = jnp.divide(block_amax, DATA_DTYPE_MAX)
+        block_scale_inv = block_scale_inv * tensor_scale
+        block_scale_inv = jnp.clip(block_scale_inv, -SCALE_DTYPE_MAX, SCALE_DTYPE_MAX)
+
+        # Apply scaling
+        scaled_x = x.astype(jnp.float32) * block_scale_inv
+        clipped_x = jnp.clip(scaled_x, -DATA_DTYPE_MAX, DATA_DTYPE_MAX)
+
+        # Cast to the right dtype
+        quantized_data = clipped_x.astype(self.q_dtype)
+        block_scale_inv = block_scale_inv.astype(scale_dtype)
+
+        return ScaledTensorFactory.create_1x(
+            data=quantized_data,
+            scale_inv=block_scale_inv,
+            scaling_mode=self.scaling_mode,
+            dq_dtype=dq_dtype,
+            flatten_axis=flatten_axis,
+        )
+
+    def quantize(
+        self, x, is_rowwise: bool = None, is_colwise: bool = None, dq_dtype=None, flatten_axis=-1
+    ):
+        """Quantize a tensor using the internal _quantize_func().
+
+        Args:
+            x: Input tensor to quantize
+            is_rowwise: Whether to use row-wise quantization
+            is_colwise: Whether to use column-wise quantization
+            dq_dtype: Data type for dequantized values
+            flatten_axis: The quantization axis for the tensor
+
+        Returns:
+            A ScaledTensor1x or ScaledTensor2x containing the quantized data
+        """
+        dq_dtype = dq_dtype if dq_dtype is not None else x.dtype
+        if flatten_axis < 0:
+            flatten_axis += x.ndim
+        assert 0 < flatten_axis < x.ndim, "flatten_axis is out of bounds!"
+
+        is_rowwise = (
+            is_rowwise
+            if is_rowwise is not None
+            else (self.q_layout == QuantizeLayout.ROWWISE or self.is_2x2x())
+        )
+        is_colwise = (
+            is_colwise
+            if is_colwise is not None
+            else (self.q_layout == QuantizeLayout.COLWISE or self.is_2x2x())
+        )
+
+        assert is_rowwise and not is_colwise, "NVFP4_1D_SCALING only support rowwise quantization"
+        return self._quantize_func(x, dq_dtype=dq_dtype, flatten_axis=flatten_axis)
+
+
+@register_pytree_node_class
+@dataclass
 class QuantizerSet:
     """Set of quantizers for different tensor types.
 
@@ -776,6 +894,7 @@ class QuantizerFactory:
         ScalingMode.DELAYED_TENSOR_SCALING: DelayedScaleQuantizer,
         ScalingMode.CURRENT_TENSOR_SCALING: CurrentScaleQuantizer,
         ScalingMode.MXFP8_1D_SCALING: BlockScaleQuantizer,
+        ScalingMode.NVFP4_1D_SCALING: NVFP4Quantizer,
     }
 
     @staticmethod

@@ -275,13 +275,15 @@ class BlockScalingModeMetadataImpl(ScalingModeMetadataImpl):
         _block_alignment: Alignment requirements for blocks
     """
 
-    def __init__(self, block_dims: Tuple[int]):
+    def __init__(self, block_dims: Tuple[int], scale_dtype: jnp.dtype):
         """Initialize block scaling mode implementation.
 
         Args:
             block_dims: Dimensions of the scaling blocks
+            scale_dtype: Data type of the scale tensor
         """
         self._block_dims = block_dims
+        self._scale_dtype = scale_dtype
         self._block_alignment = (128, 4)
 
     def get_scale_dtype(self) -> jnp.dtype:
@@ -290,7 +292,7 @@ class BlockScalingModeMetadataImpl(ScalingModeMetadataImpl):
         Returns:
             The data type used for scale tensors (float8_e8m0fnu)
         """
-        return jnp.float8_e8m0fnu
+        return self._scale_dtype
 
     def _apply_scale_shape_correction(self, data_shape, n_scale_blocks, scale_block_dim):
         """Remove excess padding from the scale shape and return the shape with respect to the original data shape."""
@@ -543,6 +545,7 @@ class ScalingMode(Enum):
     DELAYED_TENSOR_SCALING = JAXX_Scaling_Mode.DELAYED_TENSOR_SCALING
     MXFP8_1D_SCALING = JAXX_Scaling_Mode.MXFP8_1D_SCALING
     CURRENT_TENSOR_SCALING = JAXX_Scaling_Mode.CURRENT_TENSOR_SCALING
+    NVFP4_1D_SCALING = JAXX_Scaling_Mode.NVFP4_1D_SCALING
 
     def _get_impl(self) -> ScalingModeMetadataImpl:
         """Get the implementation for this scaling mode.
@@ -736,9 +739,9 @@ class ScalingMode(Enum):
 
 
 SCALING_MODES_TO_IMPL: Dict[ScalingMode, ScalingModeMetadataImpl] = {
+    ScalingMode.NO_SCALING: DelayedScalingModeMetadataImpl(),   # TODO(Phuong)
     ScalingMode.DELAYED_TENSOR_SCALING: DelayedScalingModeMetadataImpl(),
-    ScalingMode.MXFP8_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 32)),
-    # WAR
+    ScalingMode.MXFP8_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 32), scale_dtype=jnp.float8_e8m0fnu),
     ScalingMode.CURRENT_TENSOR_SCALING: CurrentScalingModeMetadataImpl(),
-    ScalingMode.NO_SCALING: DelayedScalingModeMetadataImpl(),
+    ScalingMode.NVFP4_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 16), scale_dtype=jnp.float8_e4m3fnu),
 }
