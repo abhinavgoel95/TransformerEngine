@@ -629,12 +629,14 @@ def _quantize_dbias_impl(
         return out, dbias
 
     scale = jnp.empty((), jnp.float32)
-    if quantizer.scaling_mode == ScalingMode.CURRENT_TENSOR_SCALING:
+    amax = jnp.empty((), jnp.float32)
+    if quantizer.scaling_mode in (ScalingMode.CURRENT_TENSOR_SCALING, ScalingMode.NVFP4_1D_SCALING):
         # Globally reduce amax across all devices for current scaling so we have a single global scale.
         # This differs from the PyTorch implementation which uses a local amax and scale per-device and persists this
         # until the tensor is dequantized (e.g. in the GEMM).
         amax = jnp.amax(jnp.abs(x), keepdims=True).astype(jnp.float32)
         scale = compute_scale_from_amax(amax, quantizer.q_dtype)
+        amax = amax.reshape((1,))
     elif quantizer.scaling_mode == ScalingMode.DELAYED_TENSOR_SCALING:
         scale = quantizer.scale
 
@@ -687,6 +689,7 @@ def _quantize_dbias_impl(
         scale_inv=rowwise_scale_inv,
         colwise_data=colwise_casted_output,
         colwise_scale_inv=colwise_scale_inv,
+        amax=amax,
         scaling_mode=quantizer.scaling_mode,
         dq_dtype=dq_dtype,
         q_layout=quantizer.q_layout,
