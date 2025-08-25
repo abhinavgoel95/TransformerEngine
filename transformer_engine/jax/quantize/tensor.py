@@ -104,6 +104,7 @@ class ScaledTensor1x(ScaledTensor):
     Attributes:
         data: The quantized tensor data
         scale_inv: The inverse scaling factors
+        amax: The maximum absolute value of the tensor
         scaling_mode: The scaling mode used for quantization
         dq_dtype: The data type for dequantized values
         _dq_func: The dequantization function
@@ -311,7 +312,7 @@ class GroupedScaledTensor1x(ScaledTensor1x):
         Returns:
             A tuple containing (children, aux_data) for tree operations
         """
-        children = (self.data, self.scale_inv, self.group_sizes, self.amax)
+        children = (self.data, self.scale_inv, self.amax, self.group_sizes)
         aux_data = (
             self.scaling_mode,
             self.dq_dtype,
@@ -416,7 +417,8 @@ class ScaledTensorFactory:
     def create_1x(
         data,
         scale_inv,
-        scaling_mode,
+        amax = jnp.zeros((1,), dtype=jnp.float32),
+        scaling_mode=ScalingMode.NO_SCALING,
         dq_dtype=jnp.bfloat16,
         is_colwise=False,
         data_layout="N",
@@ -430,6 +432,7 @@ class ScaledTensorFactory:
         Args:
             data: The quantized tensor data
             scale_inv: The inverse scaling factors
+            amax: The maximum absolute value of the tensor
             scaling_mode: The scaling mode for quantization
             dq_dtype: The data type for dequantized values (default: bfloat16)
             is_colwise: Whether to use column-wise quantization (default: False)
@@ -471,6 +474,7 @@ class ScaledTensorFactory:
             return GroupedScaledTensor1x(
                 data=data,
                 scale_inv=scale_inv,
+                amax=amax,
                 scaling_mode=scaling_mode,
                 dq_dtype=dq_dtype,
                 _dq_func=dequantizer.grouped_dequantize,
@@ -490,6 +494,7 @@ class ScaledTensorFactory:
         return ScaledTensor1x(
             data,
             scale_inv,
+            amax,
             scaling_mode,
             dq_dtype,
             dequantizer.dequantize,
@@ -504,7 +509,8 @@ class ScaledTensorFactory:
         scale_inv,
         colwise_data,
         colwise_scale_inv,
-        scaling_mode,
+        amax = jnp.zeros((1,), dtype=jnp.float32),
+        scaling_mode=ScalingMode.NO_SCALING,
         dq_dtype=jnp.bfloat16,
         data_layout="NN",
         flatten_axis=-1,
@@ -534,6 +540,7 @@ class ScaledTensorFactory:
         rowwise_tensor = ScaledTensorFactory.create_1x(
             data,
             scale_inv,
+            amax,
             scaling_mode,
             dq_dtype,
             is_colwise=False,
@@ -546,6 +553,7 @@ class ScaledTensorFactory:
         colwise_tensor = ScaledTensorFactory.create_1x(
             colwise_data,
             colwise_scale_inv,
+            amax,
             scaling_mode,
             dq_dtype,
             is_colwise=True,
@@ -563,7 +571,8 @@ class ScaledTensorFactory:
         scale_inv: jnp.ndarray,
         colwise_data: jnp.ndarray,
         colwise_scale_inv: jnp.ndarray,
-        scaling_mode: ScalingMode,
+        amax = jnp.zeros((1,), dtype=jnp.float32),
+        scaling_mode: ScalingMode = ScalingMode.NO_SCALING,
         dq_dtype: jnp.dtype = jnp.bfloat16,
         data_layout: str = "NN",
         q_layout: QuantizeLayout = QuantizeLayout.ROWWISE,
@@ -597,6 +606,7 @@ class ScaledTensorFactory:
                 scale_inv,
                 colwise_data,
                 colwise_scale_inv,
+                amax,
                 scaling_mode,
                 dq_dtype,
                 data_layout=data_layout,
@@ -611,6 +621,7 @@ class ScaledTensorFactory:
             return ScaledTensorFactory.create_1x(
                 colwise_data,
                 colwise_scale_inv,
+                amax,
                 scaling_mode,
                 dq_dtype,
                 is_colwise=is_colwise,
@@ -624,6 +635,7 @@ class ScaledTensorFactory:
         return ScaledTensorFactory.create_1x(
             data,
             scale_inv,
+            amax,
             scaling_mode,
             dq_dtype,
             is_colwise=is_colwise,
