@@ -65,6 +65,7 @@ if is_fp8_supported:
     supported_scaling_modes.append(ScalingMode.CURRENT_TENSOR_SCALING)
 if is_mxfp8_supported:
     supported_scaling_modes.append(ScalingMode.MXFP8_1D_SCALING)
+    supported_scaling_modes.append(ScalingMode.NVFP4_1D_SCALING)    #TODO: fix this WAR
 
 
 def is_shape_supported_by_mxfp8(input_shape):
