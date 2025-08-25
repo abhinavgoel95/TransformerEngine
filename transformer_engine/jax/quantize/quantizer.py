@@ -602,11 +602,11 @@ class NVFP4Quantizer(Quantizer):
         block_amax = jnp.max(jnp.abs(x), axis=(flatten_axis + 2 - 2, -1),
                              keepdims=True).astype(jnp.float32)
         block_scale_inv = jnp.divide(block_amax, DATA_DTYPE_MAX)
-        block_scale_inv = block_scale_inv * tensor_scale
+        block_scale_inv = block_scale_inv
         block_scale_inv = jnp.clip(block_scale_inv, -SCALE_DTYPE_MAX, SCALE_DTYPE_MAX)
 
         # Apply scaling
-        scaled_x = x.astype(jnp.float32) * block_scale_inv
+        scaled_x = x.astype(jnp.float32) * block_scale_inv * tensor_scale
         clipped_x = jnp.clip(scaled_x, -DATA_DTYPE_MAX, DATA_DTYPE_MAX)
 
         # Cast to the right dtype
@@ -616,6 +616,7 @@ class NVFP4Quantizer(Quantizer):
         return ScaledTensorFactory.create_1x(
             data=quantized_data,
             scale_inv=block_scale_inv,
+            amax = global_amax,
             scaling_mode=self.scaling_mode,
             dq_dtype=dq_dtype,
             flatten_axis=flatten_axis,
