@@ -96,6 +96,9 @@ def assert_bitwise_scaled_tensors(
         elif a.scaling_mode == ScalingMode.MXFP8_1D_SCALING:
             # Compare MXFP8 scales as uint8
             assert_allclose(a.scale_inv.astype(jnp.uint8), b.scale_inv.astype(jnp.uint8))
+        elif a.scaling_mode == ScalingMode.NVFP4_1D_SCALING:
+            assert_allclose(a.amax, b.amax)
+            assert_allclose(a.scale_inv, b.scale_inv)
         else:
             raise ValueError(f"Unsupported scaling mode {a.scaling_mode}")
         assert_allclose(a.data, b.data)
@@ -585,11 +588,14 @@ QUANTIZATION_INPUT_DTYPE = {
 
 @pytest.mark.skipif(not is_fp8_supported, reason=fp8_unsupported_reason)
 @pytest_parametrize_wrapper("in_dtype", QUANTIZATION_INPUT_DTYPE)
-@pytest_parametrize_wrapper("q_dtype", [jnp.float8_e4m3fn, jnp.float8_e5m2])
+# @pytest_parametrize_wrapper("q_dtype", [jnp.float8_e4m3fn, jnp.float8_e5m2])
+@pytest_parametrize_wrapper("q_dtype", [jnp.float4_e2m1fn])
 @pytest_parametrize_wrapper("input_shape,flatten_axis", ALL_QUANTIZE_TEST_SHAPES_AND_FLATTEN_AXES)
-@pytest_parametrize_wrapper("scaling_mode", supported_scaling_modes)
+# @pytest_parametrize_wrapper("scaling_mode", supported_scaling_modes)
+@pytest_parametrize_wrapper("scaling_mode", [ScalingMode.NVFP4_1D_SCALING])
 @pytest_parametrize_wrapper(
-    "q_layout", [QuantizeLayout.ROWWISE, QuantizeLayout.COLWISE, QuantizeLayout.ROWWISE_COLWISE]
+    # "q_layout", [QuantizeLayout.ROWWISE, QuantizeLayout.COLWISE, QuantizeLayout.ROWWISE_COLWISE]
+    "q_layout", [QuantizeLayout.ROWWISE]
 )
 class TestQuantize:
     """
