@@ -82,7 +82,7 @@ Error_Type DBiasQuantizeFFI(cudaStream_t stream, Buffer_Type input_buf, Buffer_T
   auto out_dtype = convert_ffi_datatype_to_te_dtype(output_buf->element_type());
   auto workspace_dtype = convert_ffi_datatype_to_te_dtype(workspace_buf->element_type());
 
-  NVTE_CHECK(is_fp8_dtype(out_dtype), "Output datatype must be FP8 for quantization.");
+  NVTE_CHECK(is_fp8_dtype(out_dtype) || is_fp4_dtype(out_dtype), "Output datatype must be FP8 or FP4 for quantization.");
 
   auto *input = input_buf.untyped_data();
 
@@ -141,7 +141,7 @@ Error_Type DBiasQuantizeFFI(cudaStream_t stream, Buffer_Type input_buf, Buffer_T
     if (is_nvfp4) {
       float *amax = reinterpret_cast<float *>(amax_buf.untyped_data());
       NVTE_CHECK(amax != nullptr, "amax must be provided for NVFP4");
-      input_tensor.set_amax(amax, DType::kFloat32, std::vector<size_t>{1});
+      output_tensor.set_amax(amax, DType::kFloat32, std::vector<size_t>{1});
     }
   }
 

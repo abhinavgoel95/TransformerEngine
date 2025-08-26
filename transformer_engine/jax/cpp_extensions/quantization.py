@@ -87,6 +87,7 @@ class BaseDBiasQuantizePrimitive(BasePrimitive):
         """
         dtype = dtypes.canonicalize_dtype(x_aval.dtype)
         assert dtype in [jnp.float32, jnp.float16, jnp.bfloat16]
+        import pdb; pdb.set_trace()
         out_shape = x_aval.shape
         assert scale_aval is None or scale_aval.dtype == jnp.float32
 
@@ -183,9 +184,9 @@ class BaseDBiasQuantizePrimitive(BasePrimitive):
         te_dbias_quantize_p lowering rules
         """
         del out_dtype, scale_dtype, is_outer
-        x_aval, scale_aval = ctx.avals_in
+        x_aval, scale_aval, amax_aval = ctx.avals_in
         assert x_aval.dtype in [jnp.float32, jnp.float16, jnp.bfloat16]
-        assert scale_aval.dtype == jnp.float32
+        assert scale_aval.dtype == amax_aval.dtype == jnp.float32
         return ffi.ffi_lowering(
             BaseDBiasQuantizePrimitive.name,
             operand_output_aliases={2: 4},  # donate amax buffer to updated_amax
@@ -634,16 +635,18 @@ def _quantize_dbias_impl(
         return out, dbias
 
     scale = jnp.empty((), jnp.float32)
-    amax = jnp.zeros((1,), jnp.float32)
-    if quantizer.scaling_mode in (ScalingMode.CURRENT_TENSOR_SCALING, ScalingMode.NVFP4_1D_SCALING):
+    if quantizer.scaling_mode == ScalingMode.CURRENT_TENSOR_SCALING:
         # Globally reduce amax across all devices for current scaling so we have a single global scale.
         # This differs from the PyTorch implementation which uses a local amax and scale per-device and persists this
         # until the tensor is dequantized (e.g. in the GEMM).
         amax = jnp.amax(jnp.abs(x), keepdims=True).astype(jnp.float32)
         scale = compute_scale_from_amax(amax, quantizer.q_dtype)
-        amax = amax.reshape((1,))
     elif quantizer.scaling_mode == ScalingMode.DELAYED_TENSOR_SCALING:
         scale = quantizer.scale
+        # Make sure to reset amax to zeros for DelayedScaling
+        amax = jnp.zeros((1,), jnp.float32)
+    elif quantizer.scaling_mode == ScalingMode.NVFP4_1D_SCALING:
+        amax = jnp.amax(jnp.abs(x)).astype(jnp.float32)
 
     # It is faster to use 1x quantization for tensor scaling
     is_1x_kernel_supported = not (is_dbias and get_min_device_compute_capability() < 100)

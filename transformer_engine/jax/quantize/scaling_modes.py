@@ -275,7 +275,7 @@ class BlockScalingModeMetadataImpl(ScalingModeMetadataImpl):
         _block_alignment: Alignment requirements for blocks
     """
 
-    def __init__(self, block_dims: Tuple[int], scale_dtype: jnp.dtype):
+    def __init__(self, block_dims: Tuple[int], scale_dtype: jnp.dtype, scale_block_alignment: Tuple[int]):
         """Initialize block scaling mode implementation.
 
         Args:
@@ -284,7 +284,7 @@ class BlockScalingModeMetadataImpl(ScalingModeMetadataImpl):
         """
         self._block_dims = block_dims
         self._scale_dtype = scale_dtype
-        self._block_alignment = (128, 4)
+        self._block_alignment = scale_block_alignment
 
     def get_scale_dtype(self) -> jnp.dtype:
         """Get the data type for scale tensors in block scaling.
@@ -741,7 +741,11 @@ class ScalingMode(Enum):
 SCALING_MODES_TO_IMPL: Dict[ScalingMode, ScalingModeMetadataImpl] = {
     ScalingMode.NO_SCALING: DelayedScalingModeMetadataImpl(),   # TODO(Phuong)
     ScalingMode.DELAYED_TENSOR_SCALING: DelayedScalingModeMetadataImpl(),
-    ScalingMode.MXFP8_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 32), scale_dtype=jnp.float8_e8m0fnu),
+    ScalingMode.MXFP8_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 32),
+                                                               scale_dtype=jnp.float8_e8m0fnu,
+                                                               scale_block_alignment=(128, 4)),
     ScalingMode.CURRENT_TENSOR_SCALING: CurrentScalingModeMetadataImpl(),
-    ScalingMode.NVFP4_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 16), scale_dtype=jnp.float8_e4m3fn),
+    ScalingMode.NVFP4_1D_SCALING: BlockScalingModeMetadataImpl(block_dims=(1, 16),
+                                                               scale_dtype=jnp.float8_e4m3fn,
+                                                               scale_block_alignment=(128, 8)),
 }
