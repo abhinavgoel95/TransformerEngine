@@ -87,7 +87,6 @@ class BaseDBiasQuantizePrimitive(BasePrimitive):
         """
         dtype = dtypes.canonicalize_dtype(x_aval.dtype)
         assert dtype in [jnp.float32, jnp.float16, jnp.bfloat16]
-        import pdb; pdb.set_trace()
         out_shape = x_aval.shape
         assert scale_aval is None or scale_aval.dtype == jnp.float32
 
