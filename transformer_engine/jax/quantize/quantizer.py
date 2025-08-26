@@ -610,8 +610,8 @@ class NVFP4Quantizer(Quantizer):
         clipped_x = jnp.clip(scaled_x, -DATA_DTYPE_MAX, DATA_DTYPE_MAX)
 
         # Cast to the right dtype
-        quantized_data = clipped_x.astype(self.q_dtype)
-        block_scale_inv = block_scale_inv.astype(scale_dtype)
+        quantized_data = clipped_x.reshape(x_shape).astype(self.q_dtype)
+        block_scale_inv = block_scale_inv.reshape(scale_shape).astype(scale_dtype)
 
         return ScaledTensorFactory.create_1x(
             data=quantized_data,
