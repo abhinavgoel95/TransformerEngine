@@ -102,7 +102,6 @@ Error_Type DBiasQuantizeFFI(cudaStream_t stream, Buffer_Type input_buf, Buffer_T
   auto workspace_dims = workspace_buf->dimensions();
   auto m = product(input_dims, 0, flatten_axis);
   auto n = product(input_dims, flatten_axis, input_ndim);
-  std::cerr << "Output shape  m x n -- " << m << "x" << n << std::endl;
   auto input_shape = std::vector<size_t>{m, n};
   auto output_shape = std::vector<size_t>{m, n};
   auto output_trans_shape = std::vector<size_t>{n, m};
