@@ -561,15 +561,13 @@ QUANTIZE_OUTPUT_DTYPES = {
 }
 
 ALL_QUANTIZE_TEST_SHAPES_AND_FLATTEN_AXES = [
-    # ((32, 64), -1),
-    ((64, 64), -1),
+    ((32, 64), -1),
     ((2, 64, 32), -1),
-    # ((64, 2, 32), -2),
+    ((64, 2, 32), -2),
     ((32, 256, 128), -1),
-    # ((32, 256, 128), -2),
+    ((32, 256, 128), -2),
     ((64, 32, 32, 256), -1),
-    # ((64, 32, 32, 256), -2),
-    # ((64, 32, 32, 256), -3),
+    ((8192, 2, 4096), -2),
 ]
 
 QUANTIZE_TEST_SHAPES_AND_FLATTEN_AXES = {
@@ -634,7 +632,6 @@ class TestQuantize:
         jax_output = _jax_quantize(input, quantizer=jax_quantizer, flatten_axis=flatten_axis)
 
         te_output = tex.quantize(input, quantizer=te_quantizer, flatten_axis=flatten_axis)
-        import pdb; pdb.set_trace()
         assert_bitwise_scaled_tensors(te_output, jax_output)
 
 
