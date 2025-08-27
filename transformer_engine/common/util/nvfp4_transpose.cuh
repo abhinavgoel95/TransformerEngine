@@ -11,6 +11,7 @@
 #ifndef TRANSFORMER_ENGINE_NVFP4_TRANSPOSE_CUH_
 #define TRANSFORMER_ENGINE_NVFP4_TRANSPOSE_CUH_
 
+#include <iostream>
 #include <cuda.h>
 #include <cudaTypedefs.h>
 #include <cuda_runtime.h>
@@ -860,10 +861,12 @@ void nvfp4_quantize_transpose(const Tensor &input, const Tensor *noop, Tensor *o
   using namespace nvfp4_transpose;
   using namespace ptx;
 
+  std::cerr << "Inside nvfp4_quantize_transpose - output shape " << output->flat_first_dim() << "x" << output->flat_last_dim() << std::endl;
   checkCuDriverContext(stream);
   CheckNoopTensor(*noop, "cast_noop");
   CheckInputTensor(input, "input");
   CheckOutputTensor(*output, "output", false);
+  std::cerr << "Inside nvfp4_quantize_transpose - After CheckOutputTensor" << std::endl;
 
   NVTE_CHECK(input.has_data(), "Cannot quantize tensor without rowwise data.");
   NVTE_CHECK(output->has_data(), "NVFP4 output tensor must be allocated.");
@@ -879,6 +882,7 @@ void nvfp4_quantize_transpose(const Tensor &input, const Tensor *noop, Tensor *o
 
   const size_t rows = input.flat_first_dim();
   const size_t cols = input.flat_last_dim();
+  std::cerr << "Inside nvfp4_quantize_transpose - output shape " << output->flat_first_dim() << "x" << output->flat_last_dim() << std::endl;
 
   NVTE_CHECK(rows % 32 == 0,
              "Number of tensor rows must be a multiple of 32");  // 16B alignment for TMA

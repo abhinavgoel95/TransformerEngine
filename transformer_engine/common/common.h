@@ -207,7 +207,7 @@ struct Tensor {
           return ret;
         } else {
           auto data_shape_nvfp4 = data.shape;
-          data_shape_nvfp4.back() *= 2;
+          // data_shape_nvfp4.back() *= 2;      # TODO: double check with Przemek
           return data_shape_nvfp4;
         }
         break;

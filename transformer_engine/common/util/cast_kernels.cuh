@@ -17,6 +17,7 @@
 #include <transformer_engine/cast.h>
 
 #include <cfloat>
+#include <iostream>
 
 #include "../common.h"
 #include "../transpose/cast_transpose.h"
@@ -2043,6 +2044,7 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
                      const NVTEQuantizationConfig quant_config, cudaStream_t stream) {
   const Tensor *input_tensor;
   const Tensor *activation_input_tensor;
+  std::cerr << "Before any checks" << std::endl;
   if constexpr (IS_DBIAS || IS_DACT) {
     // backward - input is incoming gradient
     input_tensor = convertNVTETensorCheck(grad);
@@ -2052,7 +2054,10 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
     input_tensor = convertNVTETensorCheck(input);
     activation_input_tensor = nullptr;
   }
+  std::cerr << "After convertNVTETensorCheck(input)" << std::endl;
   auto output_tensor = convertNVTETensorCheck(output);
+  std::cerr << "After convertNVTETensorCheck(output)" << std::endl;
+  std::cerr << "Inside - output shape " << output_tensor->flat_first_dim() << "x" << output_tensor->flat_last_dim() << std::endl;
   auto dbias_tensor = convertNVTETensor(dbias);
   auto workspace_tensor = convertNVTETensor(workspace);
 
@@ -2094,6 +2099,7 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
       auto dtype = input_tensor->dtype();
       // TODO(Frank): Disable this fallback for perf testing.
       if (dtype == DType::kBFloat16 && rows % 32 == 0 && cols % 32 == 0) {
+        std::cerr << "calling nvfp4_quantize_transpose" << std::endl;
         nvfp4_quantize_transpose<IS_ACT, ParamOP, OP>(*input_tensor, &noop_tensor, output_tensor,
                                                       quant_config_cpp, stream);
       } else {
@@ -2104,6 +2110,7 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
                    "IS_DBIAS, IS_DACT, and IS_ACT not implemented for NVTE_NVFP4_1D_SCALING for "
                    "this shape");
 
+        std::cerr << "calling quantize_transpose_vector_blockwise_fp4" << std::endl;
         quantize_transpose_vector_blockwise_fp4(
             /*input=*/input_tensor->data,
             /*global_amax=*/global_amax,
@@ -2125,10 +2132,12 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
       break;
     }
     case NVTE_HYBRID_NVFP4_MXFP8_SCALING: {
+      std::cerr << "calling nvfp4_quantize" << std::endl;
       nvfp4_quantize<IS_ACT, ParamOP, OP>(*input_tensor, &noop_tensor, output_tensor, stream);
       break;
     }
     case NVTE_BLOCK_SCALING_2D: {
+      std::cerr << "quantize_transpose_square_blockwise" << std::endl;
       // TODO(kwyss): IS_BIAS, IS_DACT, IS_ACT, ParamOP, OP parameters support.
       NVTE_CHECK((!IS_DBIAS && !IS_DACT && !IS_ACT),
                  "IS_DBIAS, IS_DACT, and IS_ACT not implemented for NVTE_BLOCK_SCALING_2D");
@@ -2165,6 +2174,7 @@ void quantize_helper(const NVTETensor input, const NVTETensor grad, NVTETensor o
                                 ? FP8BlockwiseColumnwiseOption::COLUMNWISE_COMPACT
                                 : FP8BlockwiseColumnwiseOption::COLUMNWISE_GEMM_READY;
       }
+      std::cerr << "quantize_transpose_square_blockwise 2" << std::endl;
       quantize_transpose_vector_blockwise(input_tensor->data, output_tensor->scale_inv,
                                           output_tensor->columnwise_scale_inv, output_tensor->data,
                                           output_tensor->columnwise_data, epsilon, rowwise_option,

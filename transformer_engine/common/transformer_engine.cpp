@@ -136,6 +136,7 @@ void CheckScaleTensorShape(const Tensor &t, const std::string &name) {
       if (t.has_data()) {
         const size_t expected_y = DIVUP_TO_MULTIPLE(t.flat_first_dim(), 128);
         const size_t expected_x = DIVUP_TO_MULTIPLE(DIVUP(t.flat_last_dim(), 16lu), 4);
+        std::cerr << "data shape " << t.flat_first_dim() << "x" << t.flat_last_dim() << std::endl;
         const auto &expected = std::vector<size_t>{expected_y, expected_x};
         NVTE_CHECK(t.scale_inv.shape == expected, "Tensor \"", name,
                    "\" has invalid scale_inv shape (expected ", expected, ", got ",
