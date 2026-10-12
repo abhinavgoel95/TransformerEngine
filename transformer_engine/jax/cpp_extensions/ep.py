@@ -458,7 +458,7 @@ class EpDispatchPrimitive(BasePrimitive):
         # False: per-shard = (1,).
         del resource_axes
         del topk_idx_aval, topk_weights_aval, top_k, dispatch_output_per_expert_alignment
-        del handle_mem_aval, topk_idx_dtype
+        del topk_idx_dtype
         assert (
             len(tokens_aval.shape) >= 2
         ), f"tokens must be at least 2D [..., H], got shape {tokens_aval.shape}"
@@ -468,7 +468,7 @@ class EpDispatchPrimitive(BasePrimitive):
         leading = _ep_leading_dims(is_outer)
         recv_tokens_aval = jax.core.ShapedArray(leading + (recv_pr, hidden_dim), tok_dtype)
         recv_topk_weights_aval = jax.core.ShapedArray(leading + (recv_pr,), jnp.float32)
-        return (recv_tokens_aval, recv_topk_weights_aval)
+        return (recv_tokens_aval, recv_topk_weights_aval, handle_mem_aval)
 
     @staticmethod
     def outer_abstract(*args, **kwargs):
@@ -492,7 +492,10 @@ class EpDispatchPrimitive(BasePrimitive):
     ):
         del resource_axes
         del recv_capacity_per_rank, is_outer
-        return ffi.ffi_lowering(EpDispatchPrimitive.name)(
+        return ffi.ffi_lowering(
+            EpDispatchPrimitive.name,
+            operand_output_aliases={0: 2},  # handle_mem aliased to out_handle_mem
+        )(
             ctx,
             handle_mem,
             topk_idx,
@@ -517,7 +520,7 @@ class EpDispatchPrimitive(BasePrimitive):
         resource_axes,
     ):
         assert EpDispatchPrimitive.inner_primitive is not None
-        recv_tokens, recv_topk_weights = EpDispatchPrimitive.inner_primitive.bind(
+        recv_tokens, recv_topk_weights, handle_mem_out = EpDispatchPrimitive.inner_primitive.bind(
             handle_mem,
             topk_idx,
             tokens,
@@ -529,7 +532,7 @@ class EpDispatchPrimitive(BasePrimitive):
             is_outer=is_outer,
             resource_axes=resource_axes,
         )
-        return recv_tokens, recv_topk_weights
+        return recv_tokens, recv_topk_weights, handle_mem_out
 
     @staticmethod
     def batcher(
@@ -579,6 +582,7 @@ class EpDispatchPrimitive(BasePrimitive):
         out_shardings = (
             NamedSharding(mesh, leading_spec),
             NamedSharding(mesh, leading_spec),
+            arg_infos[0].sharding,  # out_handle_mem: same sharding as input handle_mem
         )
 
         def sharded_impl(handle_mem, topk_idx, tokens, topk_weights):
@@ -610,7 +614,7 @@ class EpDispatchPrimitive(BasePrimitive):
         idx_axes = " ".join(f"I{i}" for i in range(idx_rank - 1)) + " topk_in"
         tok_axes = " ".join(f"T{i}" for i in range(tok_rank - 1)) + " H"
         tw_axes = " ".join(f"W{i}" for i in range(tw_rank - 1)) + " topk"
-        return f"EPL hm, {idx_axes}, {tok_axes}, {tw_axes} -> EPL recv_pr H, EPL recv_pr"
+        return f"EPL hm, {idx_axes}, {tok_axes}, {tw_axes} -> EPL recv_pr H, EPL recv_pr, EPL hm"
 
 
 register_primitive(EpDispatchPrimitive)
@@ -1375,7 +1379,7 @@ def ep_prepare_dispatch_fwd(
             cfg, topk_idx, tokens, topk_weights, recv_capacity_per_rank
         )
     token_counts, total_recv_tokens, handle_mem = ep_prepare(cfg, topk_idx)
-    recv_tokens, recv_topk_weights = ep_dispatch_fwd(
+    recv_tokens, recv_topk_weights, handle_mem = ep_dispatch_fwd(
         cfg, handle_mem, topk_idx, tokens, topk_weights, recv_capacity_per_rank
     )
     return recv_tokens, recv_topk_weights, token_counts, total_recv_tokens, handle_mem
