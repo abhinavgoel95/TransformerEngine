@@ -16,6 +16,7 @@ Sharding model:
 
 import functools
 import os
+import warnings
 from dataclasses import dataclass
 
 import jax
@@ -1299,7 +1300,7 @@ register_primitive(EpCombineBwdPrimitive)
 
 
 @_on_collective_stream
-def ep_prepare(cfg: EpLayerConfig, topk_idx):
+def _ep_prepare(cfg: EpLayerConfig, topk_idx):
     """Exchange routing metadata for ``cfg``; return
     ``(token_counts, total_recv_tokens, handle_mem)``. ``total_recv_tokens`` is
     the per-rank pre-drop recv-slot total (includes tokens dropped on overflow)."""
@@ -1318,7 +1319,7 @@ def ep_prepare(cfg: EpLayerConfig, topk_idx):
 
 
 @_on_collective_stream
-def ep_dispatch_fwd(
+def _ep_dispatch_fwd(
     cfg: EpLayerConfig, handle_mem, topk_idx, tokens, topk_weights, recv_capacity_per_rank
 ):
     """Scatter tokens and weights to expert ranks; returns
@@ -1335,6 +1336,30 @@ def ep_dispatch_fwd(
         is_outer=True,
         resource_axes=_capture_ep_resource_axes(),
     )
+
+
+def ep_prepare(cfg: EpLayerConfig, topk_idx):
+    """Deprecated: use ``ep_prepare_and_dispatch_fwd``. Removal planned in about 3 months."""
+    warnings.warn(
+        "ep_prepare is deprecated and will be removed in about 3 months. Use"
+        " ep_prepare_and_dispatch_fwd instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _ep_prepare(cfg, topk_idx)
+
+
+def ep_dispatch_fwd(
+    cfg: EpLayerConfig, handle_mem, topk_idx, tokens, topk_weights, recv_capacity_per_rank
+):
+    """Deprecated: use ``ep_prepare_and_dispatch_fwd``. Removal planned in about 3 months."""
+    warnings.warn(
+        "ep_dispatch_fwd is deprecated and will be removed in about 3 months. Use"
+        " ep_prepare_and_dispatch_fwd instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _ep_dispatch_fwd(cfg, handle_mem, topk_idx, tokens, topk_weights, recv_capacity_per_rank)
 
 
 _fused_prepare_dispatch = None
@@ -1375,8 +1400,8 @@ def ep_prepare_and_dispatch_fwd(
             )
 
         return _fused()
-    token_counts, total_recv_tokens, handle_mem = ep_prepare(cfg, topk_idx)
-    recv_tokens, recv_topk_weights, handle_mem = ep_dispatch_fwd(
+    token_counts, total_recv_tokens, handle_mem = _ep_prepare(cfg, topk_idx)
+    recv_tokens, recv_topk_weights, handle_mem = _ep_dispatch_fwd(
         cfg, handle_mem, topk_idx, tokens, topk_weights, recv_capacity_per_rank
     )
     return recv_tokens, recv_topk_weights, token_counts, total_recv_tokens, handle_mem
