@@ -628,8 +628,8 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
 
     name = "te_ep_prepare_and_dispatch_ffi"
     multiple_results = True
-    impl_static_args = (3, 4, 5, 6, 7)  # top_k, dispatch_output_per_expert_alignment,
-    #                                     topk_idx_dtype, recv_capacity_per_rank, is_outer
+    impl_static_args = (3, 4, 5, 6, 7, 8)  # top_k, dispatch_output_per_expert_alignment,
+    #                                     topk_idx_dtype, recv_capacity_per_rank, is_outer, resource_axes
     inner_primitive = None
     outer_primitive = None
 
@@ -644,7 +644,9 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
         topk_idx_dtype,
         recv_capacity_per_rank,
         is_outer,
+        resource_axes,
     ):
+        del resource_axes
         del topk_idx_aval, topk_weights_aval, topk_idx_dtype
         assert (
             len(tokens_aval.shape) >= 2
@@ -693,7 +695,9 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
         topk_idx_dtype,
         recv_capacity_per_rank,
         is_outer,
+        resource_axes,
     ):
+        del resource_axes
         del recv_capacity_per_rank, is_outer
         return ffi.ffi_lowering(EpPrepareAndDispatchPrimitive.name)(
             ctx,
@@ -715,6 +719,7 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
         topk_idx_dtype,
         recv_capacity_per_rank,
         is_outer,
+        resource_axes,
     ):
         assert EpPrepareAndDispatchPrimitive.inner_primitive is not None
         return tuple(
@@ -727,6 +732,7 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
                 topk_idx_dtype=topk_idx_dtype,
                 recv_capacity_per_rank=recv_capacity_per_rank,
                 is_outer=is_outer,
+                resource_axes=resource_axes,
             )
         )
 
@@ -740,6 +746,7 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
         topk_idx_dtype,
         recv_capacity_per_rank,
         is_outer,
+        resource_axes,
     ):
         raise NotImplementedError("EpPrepareAndDispatchPrimitive does not support vmap")
 
@@ -750,13 +757,14 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
         topk_idx_dtype,
         recv_capacity_per_rank,
         is_outer,
+        resource_axes,
         mesh,
         arg_infos,
         result_infos,
     ):
         del is_outer, result_infos
         tokens_spec = arg_infos[1].sharding.spec
-        ok, ep_axis, outer_axes = _leading_axis_ok(tokens_spec)
+        ok, ep_axis, outer_axes = _leading_axis_ok(tokens_spec, resource_axes)
         if not ok:
             raise NotImplementedError(
                 "EpPrepareAndDispatch: tokens leading dim must include ep_resource"
@@ -784,6 +792,7 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
                 topk_idx_dtype,
                 recv_capacity_per_rank,
                 False,
+                resource_axes=resource_axes,
             )
 
         return mesh, sharded_impl, out_shardings, arg_shardings
@@ -791,7 +800,7 @@ class EpPrepareAndDispatchPrimitive(BasePrimitive):
     @staticmethod
     def shardy_sharding_rule(*args):
         # Static args: (top_k, dispatch_alignment, topk_idx_dtype, recv_capacity_per_rank,
-        # is_outer).
+        # is_outer, resource_axes).
         value_types = args[-2]
         idx_rank = len(value_types[0].shape)
         tok_rank = len(value_types[1].shape)
@@ -1401,6 +1410,7 @@ def _ep_fused_prepare_and_dispatch_fwd(
         topk_idx_dtype=int(cfg.topk_idx_dtype),
         recv_capacity_per_rank=recv_capacity_per_rank,
         is_outer=True,
+        resource_axes=_capture_ep_resource_axes(),
     )
 
 
